@@ -1,0 +1,1188 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, user-scalable=no">
+<title>Rimping Supermarket — ระบบตรวจสอบวันหมดอายุ</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Kanit:wght@500;600;700&family=Sarabun:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"></script>
+<style>
+  :root{
+    --g900:#143821;
+    --g700:#1E7A42;
+    --g600:#268C4C;
+    --g500:#3FA968;
+    --g100:#E6F4EA;
+    --bg:#F4F8F5;
+    --card:#FFFFFF;
+    --ink:#20281F;
+    --ink-soft:#62705F;
+    --border:#DCE8DF;
+    --amber:#DE8F2A;
+    --amber-bg:#FBF0DD;
+    --red:#D6453F;
+    --red-bg:#FBE6E5;
+    --ok-bg:#E9F6EE;
+    --radius:14px;
+    --shadow:0 2px 10px rgba(20,56,33,0.08);
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    font-family:'Sarabun',sans-serif;
+    background:var(--bg);
+    color:var(--ink);
+    height:100vh;
+    overflow:hidden;
+  }
+  h1,h2,h3,.font-display{font-family:'Kanit',sans-serif;}
+  button{font-family:inherit;cursor:pointer;border:none;background:none;color:inherit;}
+  input,select{font-family:inherit;}
+  #app{
+    display:flex;
+    flex-direction:column;
+    height:100vh;
+    max-width:480px;
+    margin:0 auto;
+    background:var(--bg);
+    position:relative;
+    box-shadow:0 0 30px rgba(0,0,0,0.08);
+  }
+
+  /* ---------- HEADER ---------- */
+  .topbar{
+    background:linear-gradient(135deg,var(--g900),var(--g700));
+    color:#fff;
+    padding:14px 16px;
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    flex-shrink:0;
+  }
+  .brand{display:flex;align-items:center;gap:10px;}
+  .brand-text{display:flex;flex-direction:column;line-height:1.25;}
+  .brand-name{font-family:'Kanit';font-weight:700;font-size:16px;letter-spacing:0.2px;}
+  .brand-sub{font-size:11.5px;color:#CFE9D8;font-weight:500;}
+  .admin-btn{
+    display:flex;align-items:center;gap:6px;
+    background:rgba(255,255,255,0.12);
+    padding:7px 12px;
+    border-radius:20px;
+    font-size:12.5px;
+    font-weight:600;
+    transition:background .15s;
+  }
+  .admin-btn.unlocked{background:#fff;color:var(--g700);}
+  .admin-btn:active{transform:scale(0.97);}
+
+  /* ---------- MAIN VIEW ---------- */
+  .view-root{
+    flex:1;
+    overflow-y:auto;
+    padding:16px 16px 90px;
+    -webkit-overflow-scrolling:touch;
+  }
+  .view-root::-webkit-scrollbar{display:none;}
+
+  /* ---------- TAB BAR ---------- */
+  .tabbar{
+    position:absolute;
+    bottom:0;left:0;right:0;
+    display:flex;
+    background:#fff;
+    border-top:1px solid var(--border);
+    padding:6px 4px calc(6px + env(safe-area-inset-bottom));
+    z-index:20;
+  }
+  .tab-btn{
+    flex:1;
+    display:flex;flex-direction:column;align-items:center;gap:3px;
+    padding:6px 0;
+    color:var(--ink-soft);
+    font-size:11px;
+    font-weight:600;
+    border-radius:10px;
+  }
+  .tab-btn.active{color:var(--g700);}
+  .tab-btn svg{width:22px;height:22px;}
+
+  /* ---------- CARDS / GENERIC ---------- */
+  .section-title{
+    font-family:'Kanit';font-weight:600;font-size:15px;
+    margin:0 0 10px;color:var(--g900);
+    display:flex;align-items:center;justify-content:space-between;
+  }
+  .stat-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:18px;}
+  .stat-card{
+    background:var(--card);border:1px solid var(--border);border-radius:var(--radius);
+    padding:14px;box-shadow:var(--shadow);
+  }
+  .stat-num{font-family:'Kanit';font-weight:700;font-size:26px;}
+  .stat-label{font-size:12px;color:var(--ink-soft);font-weight:600;margin-top:2px;}
+  .stat-card.red .stat-num{color:var(--red);}
+  .stat-card.amber .stat-num{color:var(--amber);}
+  .stat-card.green .stat-num{color:var(--g700);}
+
+  .lot-item, .product-item{
+    background:var(--card);
+    border:1px solid var(--border);
+    border-radius:var(--radius);
+    padding:12px;
+    display:flex;
+    gap:12px;
+    align-items:center;
+    margin-bottom:10px;
+    box-shadow:var(--shadow);
+  }
+  .thumb{
+    width:48px;height:48px;border-radius:10px;
+    background:var(--g100);
+    display:flex;align-items:center;justify-content:center;
+    overflow:hidden;flex-shrink:0;
+  }
+  .thumb img{width:100%;height:100%;object-fit:cover;}
+  .thumb svg{width:24px;height:24px;color:var(--g600);}
+  .item-info{flex:1;min-width:0;}
+  .item-name{font-weight:700;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .item-sub{font-size:12px;color:var(--ink-soft);margin-top:2px;}
+  .badge{
+    font-size:11px;font-weight:700;padding:4px 9px;border-radius:20px;
+    flex-shrink:0;white-space:nowrap;
+  }
+  .badge.red{background:var(--red-bg);color:var(--red);}
+  .badge.amber{background:var(--amber-bg);color:var(--amber);}
+  .badge.ok{background:var(--ok-bg);color:var(--g700);}
+
+  .empty-state{
+    text-align:center;padding:50px 20px;color:var(--ink-soft);
+  }
+  .empty-state svg{width:60px;height:60px;color:var(--g500);opacity:0.5;margin-bottom:12px;}
+  .empty-state p{font-size:13.5px;margin:4px 0;}
+
+  /* ---------- SCAN VIEW ---------- */
+  .scan-camera-wrap{
+    background:#0d1f14;border-radius:var(--radius);overflow:hidden;
+    position:relative;margin-bottom:14px;min-height:240px;
+    display:flex;align-items:center;justify-content:center;
+  }
+  #scanner-view{width:100%;}
+  #scanner-view video{width:100% !important;}
+  .scan-placeholder{color:#9FC7AC;font-size:13px;text-align:center;padding:30px;}
+  .btn{
+    display:flex;align-items:center;justify-content:center;gap:8px;
+    width:100%;padding:13px;border-radius:12px;
+    font-weight:700;font-size:14.5px;font-family:'Kanit';
+  }
+  .btn-primary{background:var(--g700);color:#fff;}
+  .btn-primary:active{background:var(--g900);}
+  .btn-outline{background:#fff;color:var(--g700);border:1.5px solid var(--g700);}
+  .btn-danger{background:var(--red-bg);color:var(--red);}
+  .btn-secondary{background:var(--g100);color:var(--g900);}
+  .btn-sm{padding:9px 14px;font-size:13px;width:auto;}
+  .btn-row{display:flex;gap:8px;}
+  .btn-row .btn{flex:1;}
+
+  .manual-entry{
+    background:var(--card);border:1px solid var(--border);border-radius:var(--radius);
+    padding:14px;margin-bottom:14px;
+  }
+  .field-label{font-size:12.5px;font-weight:700;color:var(--ink-soft);margin-bottom:6px;display:block;}
+  .text-input{
+    width:100%;padding:11px 12px;border:1.5px solid var(--border);border-radius:10px;
+    font-size:14px;background:#FAFCFA;
+  }
+  .text-input:focus{outline:none;border-color:var(--g500);}
+  .field-group{margin-bottom:13px;}
+
+  /* ---------- CALENDAR ---------- */
+  .cal-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;}
+  .cal-month-label{font-family:'Kanit';font-weight:700;font-size:16px;color:var(--g900);}
+  .cal-nav-btn{
+    width:34px;height:34px;border-radius:50%;background:var(--g100);
+    display:flex;align-items:center;justify-content:center;color:var(--g700);
+  }
+  .cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-bottom:16px;}
+  .cal-dow{text-align:center;font-size:11px;font-weight:700;color:var(--ink-soft);padding-bottom:4px;}
+  .cal-cell{
+    aspect-ratio:1;border-radius:10px;display:flex;flex-direction:column;
+    align-items:center;justify-content:center;font-size:12.5px;font-weight:600;
+    background:var(--card);border:1px solid var(--border);position:relative;color:var(--ink);
+  }
+  .cal-cell.empty{background:transparent;border:none;}
+  .cal-cell.today{border:1.5px solid var(--g600);}
+  .cal-cell.selected{background:var(--g700);color:#fff;border-color:var(--g700);}
+  .cal-dot{width:6px;height:6px;border-radius:50%;margin-top:2px;background:var(--g500);}
+  .cal-cell.has-red .cal-dot{background:var(--red);}
+  .cal-cell.has-amber .cal-dot{background:var(--amber);}
+  .cal-cell.selected .cal-dot{background:#fff;}
+
+  /* ---------- SEARCH ---------- */
+  .search-wrap{position:relative;margin-bottom:14px;}
+  .search-wrap svg{position:absolute;left:12px;top:50%;transform:translateY(-50%);width:18px;height:18px;color:var(--ink-soft);}
+  .search-wrap input{padding-left:38px;}
+
+  /* ---------- MODAL ---------- */
+  .modal-overlay{
+    position:absolute;inset:0;background:rgba(15,30,20,0.5);
+    display:flex;align-items:flex-end;justify-content:center;z-index:50;
+    animation:fadeIn .15s ease;
+  }
+  @keyframes fadeIn{from{opacity:0;}to{opacity:1;}}
+  .modal-sheet{
+    background:#fff;width:100%;max-width:480px;border-radius:20px 20px 0 0;
+    padding:18px 18px calc(20px + env(safe-area-inset-bottom));
+    max-height:88vh;overflow-y:auto;
+    animation:slideUp .2s ease;
+  }
+  @keyframes slideUp{from{transform:translateY(30px);opacity:0;}to{transform:translateY(0);opacity:1;}}
+  .modal-handle{width:36px;height:4px;background:var(--border);border-radius:4px;margin:0 auto 14px;}
+  .modal-title{font-family:'Kanit';font-weight:700;font-size:17px;margin:0 0 14px;color:var(--g900);}
+  .modal-close{position:absolute;top:14px;right:14px;width:30px;height:30px;border-radius:50%;background:var(--g100);display:flex;align-items:center;justify-content:center;color:var(--g700);}
+
+  .detail-image{width:100%;height:160px;border-radius:14px;background:var(--g100);display:flex;align-items:center;justify-content:center;overflow:hidden;margin-bottom:14px;}
+  .detail-image img{width:100%;height:100%;object-fit:cover;}
+  .detail-image svg{width:50px;height:50px;color:var(--g500);opacity:0.5;}
+  .detail-barcode{font-size:12px;color:var(--ink-soft);font-weight:600;margin-bottom:2px;}
+
+  .lot-row{
+    display:flex;align-items:center;justify-content:space-between;
+    padding:10px 0;border-bottom:1px solid var(--border);
+  }
+  .lot-row:last-child{border-bottom:none;}
+  .lot-date{font-weight:700;font-size:14px;}
+  .lot-qty{font-size:11.5px;color:var(--ink-soft);margin-top:1px;}
+  .lot-actions{display:flex;align-items:center;gap:8px;}
+  .icon-btn{width:30px;height:30px;border-radius:8px;background:var(--red-bg);color:var(--red);display:flex;align-items:center;justify-content:center;}
+  .icon-btn svg{width:15px;height:15px;}
+
+  .file-input-label{
+    display:flex;align-items:center;justify-content:center;gap:8px;
+    padding:13px;border:1.5px dashed var(--g500);border-radius:12px;
+    color:var(--g700);font-weight:600;font-size:13.5px;background:var(--g100);
+  }
+  .preview-img{width:100%;height:130px;border-radius:12px;object-fit:cover;margin-top:8px;}
+
+  .toast{
+    position:absolute;top:70px;left:50%;transform:translateX(-50%);
+    background:var(--g900);color:#fff;padding:10px 18px;border-radius:30px;
+    font-size:13px;font-weight:600;z-index:80;box-shadow:0 4px 14px rgba(0,0,0,0.2);
+    max-width:88%;text-align:center;
+  }
+  .err-text{color:var(--red);font-size:12.5px;font-weight:600;margin-top:6px;}
+  .pin-dots{display:flex;justify-content:center;gap:10px;margin:18px 0;}
+  .pin-dot{width:14px;height:14px;border-radius:50%;background:var(--border);}
+  .pin-dot.filled{background:var(--g700);}
+  .footnote{font-size:11px;color:var(--ink-soft);text-align:center;margin-top:18px;line-height:1.5;}
+
+  /* ---------- REMOVE LOT / REPORT ---------- */
+  .reason-chip-row{display:flex;gap:8px;}
+  .reason-chip{
+    flex:1;text-align:center;padding:10px 4px;border-radius:10px;
+    border:1.5px solid var(--border);font-size:13px;font-weight:700;
+    color:var(--ink-soft);background:#fff;
+  }
+  .reason-chip.selected{background:var(--g700);color:#fff;border-color:var(--g700);}
+  .lot-remove-btn{
+    font-size:11.5px;font-weight:700;padding:7px 11px;border-radius:8px;
+    background:var(--g100);color:var(--g700);white-space:nowrap;
+  }
+  .lot-remove-btn:active{background:var(--g500);color:#fff;}
+  .stat-grid-3{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:18px;}
+  .stat-card-sm{
+    background:var(--card);border:1px solid var(--border);border-radius:var(--radius);
+    padding:10px 6px;text-align:center;box-shadow:var(--shadow);
+  }
+  .stat-card-sm .stat-label{font-size:10.5px;margin-top:2px;}
+</style>
+</head>
+<body>
+<div id="app">
+  <header class="topbar">
+    <div class="brand">
+      <svg viewBox="0 0 48 48" width="34" height="34" fill="none">
+        <path d="M10 18h28l-3.2 19.5a3 3 0 0 1-3 2.5H16.2a3 3 0 0 1-3-2.5L10 18z" fill="#3FA968" stroke="#0F3A20" stroke-width="2"/>
+        <path d="M14 18c0-7.7 4.5-12 10-12s10 4.3 10 12" stroke="#0F3A20" stroke-width="2.2" fill="none" stroke-linecap="round"/>
+        <path d="M16 23v13M24 23v13M32 23v13" stroke="#0F3A20" stroke-width="1.6" stroke-linecap="round" opacity="0.55"/>
+      </svg>
+      <div class="brand-text">
+        <span class="brand-name">Rimping Supermarket</span>
+        <span class="brand-sub">ระบบตรวจสอบวันหมดอายุสินค้า</span>
+      </div>
+    </div>
+    <button id="admin-toggle" class="admin-btn">
+      <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><path id="lock-icon-path" d="M6 10V8a6 6 0 1 1 12 0v2M5 10h14a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1z"/></svg>
+      <span id="admin-toggle-label">โหมดดูเท่านั้น</span>
+    </button>
+  </header>
+
+  <main id="view-root" class="view-root"></main>
+
+  <nav class="tabbar">
+    <button class="tab-btn" data-view="dashboard">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 11l9-8 9 8M5 10v10h14V10"/></svg>
+      หน้าหลัก
+    </button>
+    <button class="tab-btn" data-view="scan">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7V5a1 1 0 0 1 1-1h2M4 17v2a1 1 0 0 0 1 1h2M20 7V5a1 1 0 0 0-1-1h-2M20 17v2a1 1 0 0 1-1 1h-2M3 12h18"/></svg>
+      สแกน
+    </button>
+    <button class="tab-btn" data-view="calendar">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 9h18M8 3v4M16 3v4"/></svg>
+      ปฏิทิน
+    </button>
+    <button class="tab-btn" data-view="list">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+      รายการ
+    </button>
+    <button class="tab-btn" data-view="report">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="3" width="12" height="18" rx="2"/><path d="M9 8h6M9 12h6M9 16h4"/></svg>
+      รายงาน
+    </button>
+  </nav>
+
+  <div id="modal-root"></div>
+  <div id="toast-root"></div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+  const ADMIN_CODE = "140840";
+  const STORAGE_KEY = "inventory:data";
+  const THAI_MONTHS = ["มกราคม","กุมภาพันธ์","มีนาคม","เมษายน","พฤษภาคม","มิถุนายน","กรกฎาคม","สิงหาคม","กันยายน","ตุลาคม","พฤศจิกายน","ธันวาคม"];
+  const THAI_MONTHS_SHORT = ["ม.ค.","ก.พ.","มี.ค.","เม.ย.","พ.ค.","มิ.ย.","ก.ค.","ส.ค.","ก.ย.","ต.ค.","พ.ย.","ธ.ค."];
+  const THAI_DOW = ["อา","จ","อ","พ","พฤ","ศ","ส"];
+  const REASON_LABELS = { expired:"หมดอายุ", damaged:"ชำรุด", other:"อื่นๆ" };
+
+  let state = {
+    view: "dashboard",
+    adminUnlocked: false,
+    inventory: { products: {}, removedLog: [] },
+    loaded: false,
+    loadError: null,
+    calMonth: (()=>{ const d=new Date(); d.setDate(1); return d; })(),
+    reportMonth: (()=>{ const d=new Date(); d.setDate(1); return d; })(),
+    selectedDate: null,
+    search: "",
+    pinError: "",
+    pinValue: "",
+    pendingBarcode: null,   // barcode just scanned, waiting for action
+    scanStatus: "idle",     // idle | starting | active | unsupported | error
+    modal: null,            // {type:'detail'|'pin'|'addProduct'|'addLot'|'editProduct', ...}
+    imageDraftDataUrl: null,
+    saving: false
+  };
+
+  let html5QrCode = null;
+  let pollTimer = null;
+
+  // ---------- helpers ----------
+  function esc(s){
+    return String(s==null?"":s).replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
+  }
+  function todayMidnight(){ const d=new Date(); d.setHours(0,0,0,0); return d; }
+  function parseDateStr(str){
+    const [y,m,d] = str.split("-").map(Number);
+    return new Date(y, m-1, d);
+  }
+  function dateToStr(d){
+    const y=d.getFullYear(), m=String(d.getMonth()+1).padStart(2,"0"), day=String(d.getDate()).padStart(2,"0");
+    return `${y}-${m}-${day}`;
+  }
+  function daysRemaining(expiryStr){
+    return Math.round((parseDateStr(expiryStr) - todayMidnight())/86400000);
+  }
+  function statusOf(days){
+    if(days<0) return "red";
+    if(days<=7) return "amber";
+    return "ok";
+  }
+  function statusLabel(days){
+    if(days<0) return `หมดอายุแล้ว ${Math.abs(days)} วัน`;
+    if(days===0) return "หมดอายุวันนี้";
+    if(days<=7) return `ใกล้หมดอายุ (${days} วัน)`;
+    return `ปกติ (${days} วัน)`;
+  }
+  function thaiDateFromDate(d){
+    return `${d.getDate()} ${THAI_MONTHS_SHORT[d.getMonth()]} ${d.getFullYear()+543}`;
+  }
+  function thaiDateShort(str){
+    return thaiDateFromDate(parseDateStr(str));
+  }
+  function uid(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,8); }
+  function showToast(msg, ms){
+    const root = document.getElementById("toast-root");
+    root.innerHTML = `<div class="toast">${esc(msg)}</div>`;
+    clearTimeout(root._t);
+    root._t = setTimeout(()=>{ root.innerHTML=""; }, ms||2200);
+  }
+
+  function allLotsFlat(){
+    const out=[];
+    const products = state.inventory.products||{};
+    Object.keys(products).forEach(barcode=>{
+      const p = products[barcode];
+      (p.lots||[]).forEach(lot=>{
+        const days = daysRemaining(lot.expiry);
+        out.push({ barcode, name:p.name, image:p.image, lotId:lot.id, expiry:lot.expiry, qty:lot.qty, days, status:statusOf(days) });
+      });
+    });
+    out.sort((a,b)=>a.days-b.days);
+    return out;
+  }
+
+  // ---------- storage ----------
+  async function loadInventory(){
+    try{
+      const res = await window.storage.get(STORAGE_KEY, true);
+      state.inventory = res && res.value ? JSON.parse(res.value) : { products:{}, removedLog:[] };
+      state.loadError = null;
+    }catch(e){
+      state.inventory = { products:{}, removedLog:[] };
+      state.loadError = null; // key simply doesn't exist yet — that's fine on first run
+    }
+    if(!state.inventory.products) state.inventory.products = {};
+    if(!state.inventory.removedLog) state.inventory.removedLog = [];
+    state.loaded = true;
+  }
+  async function saveInventory(){
+    state.saving = true;
+    try{
+      const result = await window.storage.set(STORAGE_KEY, JSON.stringify(state.inventory), true);
+      if(!result) throw new Error("save failed");
+      return true;
+    }catch(e){
+      showToast("บันทึกข้อมูลไม่สำเร็จ กรุณาลองใหม่ (ข้อมูลอาจมีขนาดใหญ่เกินไป)", 3200);
+      return false;
+    }finally{
+      state.saving = false;
+    }
+  }
+
+  // ---------- image compression ----------
+  function compressImageFile(file){
+    return new Promise((resolve,reject)=>{
+      const reader = new FileReader();
+      reader.onload = (e)=>{
+        const img = new Image();
+        img.onload = ()=>{
+          const maxW = 360;
+          const scale = Math.min(1, maxW/img.width);
+          const w = Math.round(img.width*scale), h = Math.round(img.height*scale);
+          const canvas = document.createElement("canvas");
+          canvas.width=w; canvas.height=h;
+          canvas.getContext("2d").drawImage(img,0,0,w,h);
+          resolve(canvas.toDataURL("image/jpeg",0.62));
+        };
+        img.onerror = reject;
+        img.src = e.target.result;
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  }
+
+  // ---------- scanning ----------
+  async function startScanner(){
+    state.scanStatus = "starting";
+    renderView();
+    if(typeof Html5Qrcode === "undefined"){
+      state.scanStatus = "unsupported";
+      renderView();
+      return;
+    }
+    try{
+      html5QrCode = new Html5Qrcode("scanner-view");
+      let formats = undefined;
+      if(typeof Html5QrcodeSupportedFormats !== "undefined"){
+        formats = [
+          Html5QrcodeSupportedFormats.EAN_13, Html5QrcodeSupportedFormats.EAN_8,
+          Html5QrcodeSupportedFormats.UPC_A, Html5QrcodeSupportedFormats.UPC_E,
+          Html5QrcodeSupportedFormats.CODE_128, Html5QrcodeSupportedFormats.CODE_39,
+          Html5QrcodeSupportedFormats.ITF, Html5QrcodeSupportedFormats.QR_CODE
+        ];
+      }
+      const config = { fps:10, qrbox:{width:260,height:160} };
+      if(formats) config.formatsToSupport = formats;
+      await html5QrCode.start({ facingMode:"environment" }, config, onScanSuccess, ()=>{});
+      state.scanStatus = "active";
+    }catch(e){
+      state.scanStatus = "error";
+    }
+    renderView();
+  }
+  async function stopScanner(){
+    if(html5QrCode){
+      try{ await html5QrCode.stop(); html5QrCode.clear(); }catch(e){}
+      html5QrCode = null;
+    }
+    state.scanStatus = "idle";
+  }
+  function onScanSuccess(decodedText){
+    stopScanner();
+    handleBarcodeInput(decodedText.trim());
+  }
+
+  function handleBarcodeInput(barcode){
+    if(!barcode) return;
+    const product = state.inventory.products[barcode];
+    if(product){
+      openModal({ type:"detail", barcode });
+    } else if(state.adminUnlocked){
+      openModal({ type:"addProduct", barcode });
+    } else {
+      showToast("ไม่พบสินค้านี้ในระบบ กรุณาแจ้งแอดมินให้เพิ่มข้อมูล", 3000);
+    }
+    renderView();
+  }
+
+  // ---------- modal ----------
+  function openModal(m){ state.modal = m; state.pinError=""; state.pinValue=""; state.imageDraftDataUrl=null; renderModal(); }
+  function closeModal(){ state.modal = null; renderModal(); }
+
+  function requireAdmin(action){
+    if(state.adminUnlocked){ action(); }
+    else { openModal({type:"pin", afterUnlock:action}); }
+  }
+
+  // ---------- render: shell ----------
+  function renderShell(){
+    document.getElementById("admin-toggle-label").textContent = state.adminUnlocked ? "แอดมิน (ปลดล็อกแล้ว)" : "โหมดดูเท่านั้น";
+    document.getElementById("admin-toggle").classList.toggle("unlocked", state.adminUnlocked);
+    document.querySelectorAll(".tab-btn").forEach(b=>{
+      b.classList.toggle("active", b.dataset.view===state.view);
+    });
+  }
+
+  function renderView(){
+    renderShell();
+    const root = document.getElementById("view-root");
+    if(!state.loaded){ root.innerHTML = `<div class="empty-state"><p>กำลังโหลดข้อมูล...</p></div>`; return; }
+    if(state.view==="dashboard") root.innerHTML = renderDashboard();
+    else if(state.view==="scan") root.innerHTML = renderScan();
+    else if(state.view==="calendar") root.innerHTML = renderCalendar();
+    else if(state.view==="list") root.innerHTML = renderList();
+    else if(state.view==="report") root.innerHTML = renderReport();
+    if(state.view==="scan" && state.scanStatus==="idle"){
+      // auto-start camera when entering scan tab
+      setTimeout(startScanner, 50);
+    }
+  }
+
+  // ---------- dashboard ----------
+  function renderDashboard(){
+    const lots = allLotsFlat();
+    const expired = lots.filter(l=>l.status==="red").length;
+    const urgent = lots.filter(l=>l.status==="amber").length;
+    const totalProducts = Object.keys(state.inventory.products).length;
+    const urgentList = lots.filter(l=>l.status!=="ok").slice(0,8);
+
+    let html = `
+      <div class="stat-grid">
+        <div class="stat-card red"><div class="stat-num">${expired}</div><div class="stat-label">หมดอายุแล้ว (ล็อต)</div></div>
+        <div class="stat-card amber"><div class="stat-num">${urgent}</div><div class="stat-label">ใกล้หมดอายุ ≤7 วัน</div></div>
+        <div class="stat-card green"><div class="stat-num">${totalProducts}</div><div class="stat-label">สินค้าทั้งหมด</div></div>
+        <div class="stat-card green"><div class="stat-num">${lots.length}</div><div class="stat-label">ล็อตทั้งหมด</div></div>
+      </div>
+      <div class="section-title">ต้องจัดการเร่งด่วน</div>
+    `;
+    if(urgentList.length===0){
+      html += `<div class="empty-state">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 12l2 2 4-4M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z"/></svg>
+        <p>ยังไม่มีสินค้าใกล้หมดอายุ ดีมาก!</p>
+      </div>`;
+    } else {
+      urgentList.forEach(l=>{
+        html += lotRowCard(l);
+      });
+    }
+    if(totalProducts===0){
+      html = `<div class="stat-grid">
+        <div class="stat-card red"><div class="stat-num">0</div><div class="stat-label">หมดอายุแล้ว (ล็อต)</div></div>
+        <div class="stat-card amber"><div class="stat-num">0</div><div class="stat-label">ใกล้หมดอายุ ≤7 วัน</div></div>
+        <div class="stat-card green"><div class="stat-num">0</div><div class="stat-label">สินค้าทั้งหมด</div></div>
+        <div class="stat-card green"><div class="stat-num">0</div><div class="stat-label">ล็อตทั้งหมด</div></div>
+      </div>
+      <div class="empty-state">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 7h18M5 7l1 13a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2l1-13M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/></svg>
+        <p>ยังไม่มีสินค้าในระบบ</p>
+        <p>${state.adminUnlocked ? "ไปที่แท็บ \"สแกน\" เพื่อเพิ่มสินค้าแรก" : "กรุณาติดต่อแอดมินเพื่อเพิ่มข้อมูลสินค้า"}</p>
+      </div>`;
+    }
+    html += `<div class="footnote">ข้อมูลสินค้าในแอปนี้ใช้งานร่วมกันโดยผู้ใช้ทุกคน — การเพิ่ม/แก้ไข/ลบ ต้องปลดล็อกด้วยรหัสแอดมิน</div>`;
+    return html;
+  }
+
+  function lotRowCard(l){
+    return `<div class="lot-item" data-action="open-detail" data-barcode="${esc(l.barcode)}">
+      <div class="thumb">${l.image ? `<img src="${l.image}">` : basketSvg()}</div>
+      <div class="item-info">
+        <div class="item-name">${esc(l.name)}</div>
+        <div class="item-sub">${thaiDateShort(l.expiry)}${l.qty?` · ${esc(l.qty)} หน่วย`:""}</div>
+      </div>
+      <div class="badge ${l.status}">${l.status==="ok"?"ปกติ":statusShort(l)}</div>
+    </div>`;
+  }
+  function statusShort(l){
+    if(l.status==="red") return l.days===0?"วันนี้":`เกิน ${Math.abs(l.days)} วัน`;
+    if(l.status==="amber") return `เหลือ ${l.days} วัน`;
+    return "ปกติ";
+  }
+  function basketSvg(){
+    return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 9h16l-1.6 9.7a1.5 1.5 0 0 1-1.5 1.3H7.1a1.5 1.5 0 0 1-1.5-1.3L4 9z"/><path d="M7 9c0-3.9 2.2-6 5-6s5 2.1 5 6"/></svg>`;
+  }
+
+  // ---------- scan view ----------
+  function renderScan(){
+    let camBlock = "";
+    if(state.scanStatus==="unsupported"){
+      camBlock = `<div class="scan-camera-wrap"><div class="scan-placeholder">ไม่สามารถโหลดระบบสแกนกล้องได้ในขณะนี้<br>กรุณากรอกบาร์โค้ดด้วยตนเองด้านล่าง</div></div>`;
+    } else if(state.scanStatus==="error"){
+      camBlock = `<div class="scan-camera-wrap"><div class="scan-placeholder">ไม่สามารถเปิดกล้องได้ (อาจไม่ได้อนุญาตสิทธิ์กล้อง)<br>กรุณากรอกบาร์โค้ดด้วยตนเองด้านล่าง</div></div>
+      <button class="btn btn-outline" style="margin-bottom:14px" data-action="retry-scan">ลองเปิดกล้องอีกครั้ง</button>`;
+    } else {
+      camBlock = `<div class="scan-camera-wrap"><div id="scanner-view" style="width:100%"></div>${state.scanStatus!=="active"?'<div class="scan-placeholder" style="position:absolute">กำลังเปิดกล้อง...</div>':''}</div>`;
+    }
+    return `
+      ${camBlock}
+      <div class="manual-entry">
+        <span class="field-label">หรือกรอกบาร์โค้ดด้วยตนเอง</span>
+        <div class="btn-row">
+          <input type="text" inputmode="numeric" class="text-input" id="manual-barcode" placeholder="กรอกเลขบาร์โค้ด...">
+        </div>
+        <button class="btn btn-primary" style="margin-top:10px" data-action="manual-submit">ค้นหา / เพิ่มสินค้า</button>
+      </div>
+      <div class="footnote">สแกนบาร์โค้ดเดิมซ้ำได้ เพื่อเพิ่มวันหมดอายุของล็อตใหม่สำหรับสินค้าที่มีหลายรุ่นผลิต</div>
+    `;
+  }
+
+  // ---------- calendar ----------
+  function renderCalendar(){
+    const y = state.calMonth.getFullYear(), m = state.calMonth.getMonth();
+    const firstDow = new Date(y,m,1).getDay();
+    const daysInMonth = new Date(y,m+1,0).getDate();
+    const lots = allLotsFlat();
+    const byDate = {};
+    lots.forEach(l=>{ (byDate[l.expiry] = byDate[l.expiry]||[]).push(l); });
+
+    let cells = "";
+    for(let i=0;i<firstDow;i++) cells += `<div class="cal-cell empty"></div>`;
+    const todayStr = dateToStr(todayMidnight());
+    for(let d=1; d<=daysInMonth; d++){
+      const dateStr = `${y}-${String(m+1).padStart(2,"0")}-${String(d).padStart(2,"0")}`;
+      const dayLots = byDate[dateStr]||[];
+      let cls = "cal-cell";
+      if(dateStr===todayStr) cls+=" today";
+      if(state.selectedDate===dateStr) cls+=" selected";
+      if(dayLots.some(l=>l.status==="red")) cls+=" has-red";
+      else if(dayLots.some(l=>l.status==="amber")) cls+=" has-amber";
+      cells += `<div class="${cls}" data-action="select-date" data-date="${dateStr}">${d}${dayLots.length?'<div class="cal-dot"></div>':''}</div>`;
+    }
+
+    let listHtml = "";
+    if(state.selectedDate){
+      const dayLots = byDate[state.selectedDate]||[];
+      listHtml = `<div class="section-title">${thaiDateShort(state.selectedDate)}</div>`;
+      if(dayLots.length===0){
+        listHtml += `<div class="empty-state"><p>ไม่มีสินค้าหมดอายุวันนี้</p></div>`;
+      } else {
+        dayLots.forEach(l=>{ listHtml += lotRowCard(l); });
+      }
+    } else {
+      listHtml = `<div class="footnote">แตะวันที่มีจุดสีเพื่อดูรายการสินค้าที่หมดอายุในวันนั้น</div>`;
+    }
+
+    return `
+      <div class="cal-header">
+        <button class="cal-nav-btn" data-action="cal-prev">‹</button>
+        <div class="cal-month-label">${THAI_MONTHS[m]} ${y+543}</div>
+        <button class="cal-nav-btn" data-action="cal-next">›</button>
+      </div>
+      <div class="cal-grid">
+        ${THAI_DOW.map(d=>`<div class="cal-dow">${d}</div>`).join("")}
+        ${cells}
+      </div>
+      ${listHtml}
+    `;
+  }
+
+  // ---------- list ----------
+  function renderList(){
+    const products = state.inventory.products;
+    const q = state.search.trim().toLowerCase();
+    let entries = Object.keys(products).map(barcode=>{
+      const p = products[barcode];
+      const lots = (p.lots||[]).slice().sort((a,b)=>daysRemaining(a.expiry)-daysRemaining(b.expiry));
+      const nearest = lots[0];
+      return { barcode, name:p.name, image:p.image, lotCount:lots.length, nearest };
+    });
+    if(q){
+      entries = entries.filter(e=> e.name.toLowerCase().includes(q) || e.barcode.includes(q));
+    }
+    entries.sort((a,b)=>{
+      const da = a.nearest?daysRemaining(a.nearest.expiry):9999;
+      const db = b.nearest?daysRemaining(b.nearest.expiry):9999;
+      return da-db;
+    });
+
+    let html = `
+      <div class="search-wrap">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+        <input type="text" class="text-input" id="search-input" placeholder="ค้นหาชื่อสินค้าหรือบาร์โค้ด..." value="${esc(state.search)}">
+      </div>
+    `;
+    if(entries.length===0){
+      html += `<div class="empty-state"><p>ไม่พบสินค้าที่ตรงกับการค้นหา</p></div>`;
+    } else {
+      entries.forEach(e=>{
+        const days = e.nearest ? daysRemaining(e.nearest.expiry) : null;
+        const status = days!==null ? statusOf(days) : "ok";
+        html += `<div class="product-item" data-action="open-detail" data-barcode="${esc(e.barcode)}">
+          <div class="thumb">${e.image?`<img src="${e.image}">`:basketSvg()}</div>
+          <div class="item-info">
+            <div class="item-name">${esc(e.name)}</div>
+            <div class="item-sub">${e.barcode} · ${e.lotCount} ล็อต${e.nearest?` · ใกล้สุด ${thaiDateShort(e.nearest.expiry)}`:""}</div>
+          </div>
+          <div class="badge ${status}">${status==="ok"?"ปกติ":(status==="red"?"หมดอายุ":"ใกล้หมด")}</div>
+        </div>`;
+      });
+    }
+    return html;
+  }
+
+  // ---------- report (removed/loss log) ----------
+  function renderReport(){
+    const y = state.reportMonth.getFullYear(), m = state.reportMonth.getMonth();
+    const log = (state.inventory.removedLog||[]).filter(r=>{
+      const d = new Date(r.removedAt);
+      return d.getFullYear()===y && d.getMonth()===m;
+    }).sort((a,b)=> new Date(b.removedAt) - new Date(a.removedAt));
+
+    const totalCount = log.length;
+    const totalQty = log.reduce((s,r)=> s + (Number(r.qty)||0), 0);
+    const byReason = { expired:0, damaged:0, other:0 };
+    log.forEach(r=>{ byReason[r.reason] = (byReason[r.reason]||0) + 1; });
+
+    let listHtml = "";
+    if(log.length===0){
+      listHtml = `<div class="empty-state"><p>ยังไม่มีรายการเก็บออกในเดือนนี้</p></div>`;
+    } else {
+      log.forEach(r=>{
+        const d = new Date(r.removedAt);
+        listHtml += `<div class="lot-item">
+          <div class="thumb">${r.image?`<img src="${r.image}">`:basketSvg()}</div>
+          <div class="item-info">
+            <div class="item-name">${esc(r.productName)}</div>
+            <div class="item-sub">${thaiDateFromDate(d)} · ${REASON_LABELS[r.reason]||"อื่นๆ"}${r.qty?` · ${esc(r.qty)} หน่วย`:""}</div>
+          </div>
+        </div>`;
+      });
+    }
+
+    return `
+      <div class="cal-header">
+        <button class="cal-nav-btn" data-action="report-prev">‹</button>
+        <div class="cal-month-label">${THAI_MONTHS[m]} ${y+543}</div>
+        <button class="cal-nav-btn" data-action="report-next">›</button>
+      </div>
+      <div class="stat-grid">
+        <div class="stat-card green"><div class="stat-num">${totalCount}</div><div class="stat-label">จำนวนครั้งที่เก็บออก</div></div>
+        <div class="stat-card amber"><div class="stat-num">${totalQty}</div><div class="stat-label">จำนวนหน่วยรวม</div></div>
+      </div>
+      <div class="stat-grid-3">
+        <div class="stat-card-sm"><div class="stat-num" style="font-size:18px">${byReason.expired||0}</div><div class="stat-label">หมดอายุ</div></div>
+        <div class="stat-card-sm"><div class="stat-num" style="font-size:18px">${byReason.damaged||0}</div><div class="stat-label">ชำรุด</div></div>
+        <div class="stat-card-sm"><div class="stat-num" style="font-size:18px">${byReason.other||0}</div><div class="stat-label">อื่นๆ</div></div>
+      </div>
+      <div class="section-title">รายการที่เก็บออกเดือนนี้</div>
+      ${listHtml}
+      <div class="footnote">รายงานนี้สรุปจากสินค้าที่กดยืนยัน "เก็บออกแล้ว" ในแท็บรายละเอียดสินค้า ใช้สำหรับวิเคราะห์ว่าสินค้าตัวใดสูญเสียบ่อย เพื่อปรับปริมาณการสั่งซื้อ</div>
+    `;
+  }
+  function renderModal(){
+    const root = document.getElementById("modal-root");
+    if(!state.modal){ root.innerHTML=""; return; }
+    const m = state.modal;
+    let inner = "";
+    if(m.type==="pin") inner = modalPin();
+    else if(m.type==="detail") inner = modalDetail(m.barcode);
+    else if(m.type==="addProduct") inner = modalAddProduct(m.barcode);
+    else if(m.type==="addLot") inner = modalAddLot(m.barcode);
+    else if(m.type==="editProduct") inner = modalEditProduct(m.barcode);
+    else if(m.type==="removeLot") inner = modalRemoveLot(m.barcode, m.lotId);
+    root.innerHTML = `<div class="modal-overlay" data-action="overlay-close">
+      <div class="modal-sheet" data-stop="1">
+        <div class="modal-handle"></div>
+        <button class="modal-close" data-action="close-modal">✕</button>
+        ${inner}
+      </div>
+    </div>`;
+  }
+
+  function modalPin(){
+    const filled = state.pinValue.length;
+    return `
+      <h3 class="modal-title">ใส่รหัสแอดมิน</h3>
+      <p style="font-size:13px;color:var(--ink-soft);margin:-8px 0 4px;">เฉพาะแอดมินเท่านั้นที่สามารถเพิ่ม/แก้ไข/ลบสินค้าได้</p>
+      <div class="pin-dots">${[0,1,2,3,4,5].map(i=>`<div class="pin-dot ${i<filled?'filled':''}"></div>`).join("")}</div>
+      <input type="password" inputmode="numeric" maxlength="6" id="pin-input" class="text-input" style="text-align:center;font-size:20px;letter-spacing:6px;" placeholder="••••••" value="${esc(state.pinValue)}">
+      ${state.pinError?`<div class="err-text" style="text-align:center">${esc(state.pinError)}</div>`:""}
+      <button class="btn btn-primary" style="margin-top:16px" data-action="pin-submit">ปลดล็อก</button>
+    `;
+  }
+
+  function modalDetail(barcode){
+    const p = state.inventory.products[barcode];
+    if(!p) return `<p>ไม่พบข้อมูลสินค้า</p>`;
+    const lots = (p.lots||[]).slice().sort((a,b)=>daysRemaining(a.expiry)-daysRemaining(b.expiry));
+    let lotsHtml = lots.map(l=>{
+      const days = daysRemaining(l.expiry);
+      const status = statusOf(days);
+      return `<div class="lot-row">
+        <div>
+          <div class="lot-date">${thaiDateShort(l.expiry)}</div>
+          <div class="lot-qty">${statusLabel(days)}${l.qty?` · ${esc(l.qty)} หน่วย`:""}</div>
+        </div>
+        <div class="lot-actions">
+          <span class="badge ${status}">${status==="red"?"หมดอายุ":status==="amber"?"ใกล้หมด":"ปกติ"}</span>
+          ${state.adminUnlocked?`<button class="lot-remove-btn" data-action="open-remove-lot" data-barcode="${esc(barcode)}" data-lot="${esc(l.id)}">เก็บออก</button>`:""}
+        </div>
+      </div>`;
+    }).join("") || `<p style="font-size:13px;color:var(--ink-soft)">ยังไม่มีล็อตสินค้า</p>`;
+
+    return `
+      <div class="detail-image">${p.image?`<img src="${p.image}">`:basketSvg()}</div>
+      <h3 class="modal-title" style="margin-bottom:2px">${esc(p.name)}</h3>
+      <div class="detail-barcode">บาร์โค้ด: ${esc(barcode)}</div>
+      <div class="section-title" style="margin-top:16px">รายการล็อต / วันหมดอายุ</div>
+      ${lotsHtml}
+      ${state.adminUnlocked?`
+        <div class="btn-row" style="margin-top:16px">
+          <button class="btn btn-primary" data-action="open-add-lot" data-barcode="${esc(barcode)}">+ เพิ่มล็อตใหม่</button>
+          <button class="btn btn-outline" data-action="open-edit-product" data-barcode="${esc(barcode)}">แก้ไข</button>
+        </div>
+        <button class="btn btn-danger" style="margin-top:8px" data-action="delete-product" data-barcode="${esc(barcode)}">ลบสินค้านี้ทั้งหมด</button>
+      `:""}
+    `;
+  }
+
+  function modalAddProduct(barcode){
+    return `
+      <h3 class="modal-title">เพิ่มสินค้าใหม่</h3>
+      <div class="field-group">
+        <span class="field-label">บาร์โค้ด</span>
+        <input type="text" class="text-input" id="f-barcode" value="${esc(barcode||'')}" ${barcode?'readonly':''}>
+      </div>
+      <div class="field-group">
+        <span class="field-label">ชื่อสินค้า *</span>
+        <input type="text" class="text-input" id="f-name" placeholder="เช่น นมสดพาสเจอร์ไรส์ 1L">
+      </div>
+      <div class="field-group">
+        <span class="field-label">รูปภาพสินค้า</span>
+        <label class="file-input-label">
+          📷 ถ่ายรูป / เลือกรูปภาพ
+          <input type="file" accept="image/*" capture="environment" id="f-image" style="display:none">
+        </label>
+        <img id="f-image-preview" class="preview-img" style="display:none">
+      </div>
+      <div class="field-group">
+        <span class="field-label">วันหมดอายุ (ล็อตแรก) *</span>
+        <input type="date" class="text-input" id="f-expiry">
+      </div>
+      <div class="field-group">
+        <span class="field-label">จำนวน (ไม่บังคับ)</span>
+        <input type="number" min="0" class="text-input" id="f-qty" placeholder="เช่น 24">
+      </div>
+      <div id="f-error" class="err-text"></div>
+      <button class="btn btn-primary" data-action="submit-add-product">บันทึกสินค้าใหม่</button>
+    `;
+  }
+
+  function modalAddLot(barcode){
+    const p = state.inventory.products[barcode];
+    return `
+      <h3 class="modal-title">เพิ่มล็อตใหม่</h3>
+      <p style="font-size:13px;color:var(--ink-soft);margin-top:-8px">${esc(p?p.name:'')}</p>
+      <div class="field-group">
+        <span class="field-label">วันหมดอายุ *</span>
+        <input type="date" class="text-input" id="f-expiry">
+      </div>
+      <div class="field-group">
+        <span class="field-label">จำนวน (ไม่บังคับ)</span>
+        <input type="number" min="0" class="text-input" id="f-qty" placeholder="เช่น 24">
+      </div>
+      <div id="f-error" class="err-text"></div>
+      <button class="btn btn-primary" data-action="submit-add-lot" data-barcode="${esc(barcode)}">บันทึกล็อตใหม่</button>
+    `;
+  }
+
+  function modalEditProduct(barcode){
+    const p = state.inventory.products[barcode];
+    return `
+      <h3 class="modal-title">แก้ไขสินค้า</h3>
+      <div class="field-group">
+        <span class="field-label">ชื่อสินค้า *</span>
+        <input type="text" class="text-input" id="f-name" value="${esc(p.name)}">
+      </div>
+      <div class="field-group">
+        <span class="field-label">รูปภาพสินค้า</span>
+        <label class="file-input-label">📷 เปลี่ยนรูปภาพ
+          <input type="file" accept="image/*" capture="environment" id="f-image" style="display:none">
+        </label>
+        <img id="f-image-preview" class="preview-img" src="${p.image||''}" style="${p.image?'':'display:none'}">
+      </div>
+      <div id="f-error" class="err-text"></div>
+      <button class="btn btn-primary" data-action="submit-edit-product" data-barcode="${esc(barcode)}">บันทึกการแก้ไข</button>
+    `;
+  }
+
+  function modalRemoveLot(barcode, lotId){
+    const p = state.inventory.products[barcode];
+    const lot = p && (p.lots||[]).find(l=>l.id===lotId);
+    if(!lot) return `<p>ไม่พบล็อตนี้ (อาจถูกจัดการไปแล้ว)</p>`;
+    const reason = (state.modal && state.modal.reason) || "expired";
+    const qtyVal = (state.modal && state.modal.qtyDraft !== undefined) ? state.modal.qtyDraft : (lot.qty || "");
+    return `
+      <h3 class="modal-title">เก็บสินค้านี้ออกจากชั้น</h3>
+      <p style="font-size:13px;color:var(--ink-soft);margin-top:-8px">${esc(p.name)} · หมดอายุ ${thaiDateShort(lot.expiry)}</p>
+      <div class="field-group">
+        <span class="field-label">เหตุผลที่เก็บออก</span>
+        <div class="reason-chip-row">
+          <button class="reason-chip ${reason==='expired'?'selected':''}" data-action="select-reason" data-reason="expired">หมดอายุ</button>
+          <button class="reason-chip ${reason==='damaged'?'selected':''}" data-action="select-reason" data-reason="damaged">ชำรุด</button>
+          <button class="reason-chip ${reason==='other'?'selected':''}" data-action="select-reason" data-reason="other">อื่นๆ</button>
+        </div>
+      </div>
+      <div class="field-group">
+        <span class="field-label">จำนวนที่เก็บออก (ไม่บังคับ)</span>
+        <input type="number" min="0" class="text-input" id="f-remove-qty" value="${esc(qtyVal)}">
+      </div>
+      <div id="f-error" class="err-text"></div>
+      <button class="btn btn-danger" data-action="submit-remove-lot" data-barcode="${esc(barcode)}" data-lot="${esc(lotId)}">ยืนยันว่าเก็บออกแล้ว</button>
+    `;
+  }
+
+  // ---------- event handling ----------
+  document.addEventListener("click", async (e)=>{
+    const tab = e.target.closest(".tab-btn");
+    if(tab){
+      if(state.view==="scan") await stopScanner();
+      state.view = tab.dataset.view;
+      state.selectedDate = null;
+      renderView();
+      return;
+    }
+    const adminToggle = e.target.closest("#admin-toggle");
+    if(adminToggle){
+      if(state.adminUnlocked){ state.adminUnlocked=false; renderShell(); showToast("ออกจากโหมดแอดมินแล้ว"); }
+      else { openModal({type:"pin"}); }
+      return;
+    }
+    const actionEl = e.target.closest("[data-action]");
+    if(!actionEl){
+      if(e.target.closest(".modal-overlay") && !e.target.closest(".modal-sheet")){ closeModal(); }
+      return;
+    }
+    const action = actionEl.dataset.action;
+
+    if(action==="close-modal" || action==="overlay-close"){ if(action==="overlay-close" && e.target.closest('.modal-sheet')) return; closeModal(); return; }
+    if(action==="open-detail"){ openModal({type:"detail", barcode:actionEl.dataset.barcode}); return; }
+    if(action==="open-add-lot"){ openModal({type:"addLot", barcode:actionEl.dataset.barcode}); return; }
+    if(action==="open-edit-product"){ openModal({type:"editProduct", barcode:actionEl.dataset.barcode}); return; }
+    if(action==="retry-scan"){ startScanner(); return; }
+
+    if(action==="cal-prev"){
+      state.calMonth.setMonth(state.calMonth.getMonth()-1);
+      state.selectedDate=null;
+      renderView();
+      return;
+    }
+    if(action==="cal-next"){
+      state.calMonth.setMonth(state.calMonth.getMonth()+1);
+      state.selectedDate=null;
+      renderView();
+      return;
+    }
+    if(action==="select-date"){
+      state.selectedDate = state.selectedDate===actionEl.dataset.date ? null : actionEl.dataset.date;
+      renderView();
+      return;
+    }
+    if(action==="report-prev"){
+      state.reportMonth.setMonth(state.reportMonth.getMonth()-1);
+      renderView();
+      return;
+    }
+    if(action==="report-next"){
+      state.reportMonth.setMonth(state.reportMonth.getMonth()+1);
+      renderView();
+      return;
+    }
+
+    if(action==="manual-submit"){
+      const val = document.getElementById("manual-barcode").value.trim();
+      if(val) handleBarcodeInput(val);
+      return;
+    }
+
+    if(action==="pin-submit"){
+      const val = document.getElementById("pin-input").value;
+      if(val === ADMIN_CODE){
+        state.adminUnlocked = true;
+        const after = state.modal.afterUnlock;
+        closeModal();
+        renderShell();
+        showToast("ปลดล็อกโหมดแอดมินสำเร็จ");
+        if(after) after();
+        renderView();
+      } else {
+        state.pinError = "รหัสไม่ถูกต้อง กรุณาลองใหม่";
+        state.pinValue = "";
+        renderModal();
+      }
+      return;
+    }
+
+    if(action==="open-remove-lot"){
+      openModal({type:"removeLot", barcode:actionEl.dataset.barcode, lotId:actionEl.dataset.lot, reason:"expired"});
+      return;
+    }
+    if(action==="select-reason"){
+      const qtyInput = document.getElementById("f-remove-qty");
+      if(qtyInput) state.modal.qtyDraft = qtyInput.value;
+      state.modal.reason = actionEl.dataset.reason;
+      renderModal();
+      return;
+    }
+    if(action==="submit-remove-lot"){
+      requireAdmin(async ()=>{
+        const barcode = actionEl.dataset.barcode, lotId = actionEl.dataset.lot;
+        const p = state.inventory.products[barcode];
+        const lot = p && p.lots.find(l=>l.id===lotId);
+        if(!lot) return;
+        const qtyInput = document.getElementById("f-remove-qty");
+        const qty = qtyInput ? qtyInput.value : (lot.qty||"");
+        const reason = (state.modal && state.modal.reason) || "expired";
+        if(!state.inventory.removedLog) state.inventory.removedLog = [];
+        state.inventory.removedLog.push({
+          id: uid(), barcode, productName: p.name, image: p.image,
+          expiry: lot.expiry, qty: qty||null, reason, removedAt: new Date().toISOString(), lotId
+        });
+        p.lots = p.lots.filter(l=>l.id!==lotId);
+        const ok = await saveInventory();
+        if(ok){ showToast("บันทึกการเก็บออกแล้ว — ดูสรุปได้ในแท็บรายงาน"); openModal({type:"detail", barcode}); renderView(); }
+      });
+      return;
+    }
+
+    if(action==="delete-product"){
+      requireAdmin(async ()=>{
+        const barcode = actionEl.dataset.barcode;
+        if(!window.confirm("ลบสินค้านี้ทั้งหมด (รวมทุกล็อต) ใช่หรือไม่? ดำเนินการนี้ไม่สามารถย้อนกลับได้")) return;
+        delete state.inventory.products[barcode];
+        const ok = await saveInventory();
+        if(ok){ showToast("ลบสินค้าแล้ว"); closeModal(); renderView(); }
+      });
+      return;
+    }
+
+    if(action==="submit-add-product"){
+      const barcode = document.getElementById("f-barcode").value.trim();
+      const name = document.getElementById("f-name").value.trim();
+      const expiry = document.getElementById("f-expiry").value;
+      const qty = document.getElementById("f-qty").value;
+      const errEl = document.getElementById("f-error");
+      if(!barcode || !name || !expiry){ errEl.textContent = "กรุณากรอกบาร์โค้ด ชื่อสินค้า และวันหมดอายุ"; return; }
+      if(state.inventory.products[barcode]){ errEl.textContent = "บาร์โค้ดนี้มีสินค้าอยู่แล้ว"; return; }
+      state.inventory.products[barcode] = {
+        name, image: state.imageDraftDataUrl || null,
+        lots: [{ id:uid(), expiry, qty: qty||null, addedAt: new Date().toISOString() }],
+        createdAt: new Date().toISOString()
+      };
+      const ok = await saveInventory();
+      if(ok){ showToast("เพิ่มสินค้าใหม่แล้ว"); closeModal(); renderView(); }
+      return;
+    }
+
+    if(action==="submit-add-lot"){
+      const barcode = actionEl.dataset.barcode;
+      const expiry = document.getElementById("f-expiry").value;
+      const qty = document.getElementById("f-qty").value;
+      const errEl = document.getElementById("f-error");
+      if(!expiry){ errEl.textContent = "กรุณาเลือกวันหมดอายุ"; return; }
+      state.inventory.products[barcode].lots.push({ id:uid(), expiry, qty: qty||null, addedAt: new Date().toISOString() });
+      const ok = await saveInventory();
+      if(ok){ showToast("เพิ่มล็อตใหม่แล้ว"); openModal({type:"detail", barcode}); renderView(); }
+      return;
+    }
+
+    if(action==="submit-edit-product"){
+      const barcode = actionEl.dataset.barcode;
+      const name = document.getElementById("f-name").value.trim();
+      const errEl = document.getElementById("f-error");
+      if(!name){ errEl.textContent = "กรุณากรอกชื่อสินค้า"; return; }
+      state.inventory.products[barcode].name = name;
+      if(state.imageDraftDataUrl) state.inventory.products[barcode].image = state.imageDraftDataUrl;
+      const ok = await saveInventory();
+      if(ok){ showToast("บันทึกการแก้ไขแล้ว"); openModal({type:"detail", barcode}); renderView(); }
+      return;
+    }
+  });
+
+  document.addEventListener("change", async (e)=>{
+    if(e.target.id==="f-image"){
+      const file = e.target.files[0];
+      if(!file) return;
+      try{
+        const dataUrl = await compressImageFile(file);
+        state.imageDraftDataUrl = dataUrl;
+        const preview = document.getElementById("f-image-preview");
+        if(preview){ preview.src = dataUrl; preview.style.display="block"; }
+      }catch(err){ showToast("ไม่สามารถอ่านรูปภาพได้"); }
+    }
+  });
+
+  document.addEventListener("input", (e)=>{
+    if(e.target.id==="search-input"){
+      state.search = e.target.value;
+      // re-render just the list body without losing focus aggressively
+      const root = document.getElementById("view-root");
+      root.innerHTML = renderList();
+      const inp = document.getElementById("search-input");
+      inp.focus();
+      inp.setSelectionRange(inp.value.length, inp.value.length);
+    }
+    if(e.target.id==="pin-input"){
+      state.pinValue = e.target.value.slice(0,6);
+      state.pinError = "";
+      renderModal();
+      const pinEl = document.getElementById("pin-input");
+      if(pinEl){ pinEl.focus(); }
+      if(state.pinValue.length===6){
+        document.querySelector('[data-action="pin-submit"]').click();
+      }
+    }
+  });
+
+  // ---------- polling for multi-user updates ----------
+  function startPolling(){
+    pollTimer = setInterval(async ()=>{
+      if(state.modal) return; // don't disrupt active editing
+      if(state.view==="scan") return;
+      await loadInventory();
+      renderView();
+    }, 20000);
+  }
+
+  // ---------- init ----------
+  async function init(){
+    await loadInventory();
+    renderView();
+    startPolling();
+  }
+  init();
+})();
+</script>
+</body>
+</html>

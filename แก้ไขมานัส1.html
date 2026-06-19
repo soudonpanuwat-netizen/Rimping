@@ -1,0 +1,1739 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1" />
+<meta name="theme-color" content="#059669" />
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='rgb(4,120,87)' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5.5 9h13l-1.4 9.3a2 2 0 0 1-2 1.7H8.9a2 2 0 0 1-2-1.7L5.5 9Z'/%3E%3Cpath d='M9 9V6.5a3 3 0 0 1 6 0V9'/%3E%3Cpath d='M9.5 13v3.2'/%3E%3Cpath d='M12 13v3.2'/%3E%3Cpath d='M14.5 13v3.2'/%3E%3C/svg%3E" />
+<title>Rimping Expiry Tracker</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = {
+    theme: {
+      extend: {
+        colors: {
+          brand: {
+            50: '#f1fdf6', 100: '#dcfce9', 200: '#bbf7d6', 300: '#86efba',
+            400: '#34d399', 500: '#10b981', 600: '#059669', 700: '#047857',
+            800: '#065f46', 900: '#064e3b',
+          },
+        },
+        fontFamily: { sans: ['"Noto Sans Thai"', '"Inter"', 'ui-sans-serif', 'system-ui', 'sans-serif'] },
+        boxShadow: { card: '0 1px 2px 0 rgba(6,78,59,0.06), 0 2px 8px -2px rgba(6,78,59,0.10)' },
+      },
+    },
+  };
+</script>
+
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+
+<style>
+  body { background-color: #f1fdf6; -webkit-tap-highlight-color: transparent; }
+  .no-scrollbar::-webkit-scrollbar { display: none; }
+  .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+  #qr-reader video { border-radius: 1rem; object-fit: cover; width: 100% !important; height: 100% !important; }
+
+  #print-area { display: none; }
+  #print-area table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  #print-area th, #print-area td { border: 1px solid #ccc; padding: 4px 8px; text-align: left; }
+  #print-area h2 { margin-bottom: 4px; font-size: 16px; }
+  #print-area p { margin-bottom: 12px; color: #555; font-size: 12px; }
+
+  @media print {
+    #app, #modal-root { display: none !important; }
+    #print-area { display: block !important; padding: 24px; }
+  }
+</style>
+</head>
+<body class="font-sans text-stone-800">
+
+<div id="app">
+  <div class="flex min-h-screen items-center justify-center bg-brand-50">
+    <p class="text-sm text-stone-400">กำลังโหลดข้อมูล...</p>
+  </div>
+</div>
+<div id="modal-root"></div>
+<div id="print-area"></div>
+
+<script>
+'use strict';
+
+// ==================== Constants ====================
+const ADMIN_ID = '63042';
+const ADMIN_PIN = '0898';
+const URGENT_WINDOW_DAYS = 7;
+const STORAGE_KEY = 'rimping_products_v1';
+const PENDING_KEY = 'rimping_pending_v1';
+
+// ==================== Supabase ====================
+// ใส่ค่า 2 ตัวนี้จากหน้า Supabase: Project Settings > API
+const SUPABASE_URL = 'https://ndipoaxxbqwxafgvgmlu.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable_HAHfwDUD3x68d-w7JQYbFw_WhVfvBta';
+
+// ปรับปรุงการตรวจสอบ Supabase ให้ปลอดภัยขึ้น
+const sb = (typeof window !== 'undefined' && window.supabase && SUPABASE_URL && SUPABASE_ANON_KEY && SUPABASE_URL !== '' && SUPABASE_ANON_KEY !== '')
+  ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+  : null;
+
+async function cloudGet(key) {
+  if (!sb) return null;
+  try {
+    const { data, error } = await sb.from('app_storage').select('value').eq('key', key).maybeSingle();
+    if (error || !data) return null;
+    return data.value;
+  } catch (err) {
+    console.error('Cloud Get Error:', err);
+    return null;
+  }
+}
+
+async function cloudSet(key, value) {
+  if (!sb) return;
+  try {
+    await sb.from('app_storage').upsert({ key, value, updated_at: new Date().toISOString() });
+  } catch (err) {
+    console.error('Cloud Set Error:', err);
+  }
+}
+
+async function cloudAppendItem(key, item) {
+  if (!sb) return;
+  try {
+    await sb.rpc('array_append_item', { p_key: key, p_item: item });
+  } catch (err) {
+    console.error('Cloud Append Error:', err);
+  }
+}
+
+async function cloudRemoveItem(key, id) {
+  if (!sb) return;
+  try {
+    await sb.rpc('array_remove_item', { p_key: key, p_id: id });
+  } catch (err) {
+    console.error('Cloud Remove Error:', err);
+  }
+}
+
+async function cloudUpdateItem(key, id, item) {
+  if (!sb) return;
+  try {
+    await sb.rpc('array_update_item', { p_key: key, p_id: id, p_item: item });
+  } catch (err) {
+    console.error('Cloud Update Error:', err);
+  }
+}
+
+let realtimeChannel = null;
+function setupRealtimeSync() {
+  if (!sb || realtimeChannel) return;
+  try {
+    realtimeChannel = sb.channel('app_storage_changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'app_storage' }, (payload) => {
+        const row = payload.new;
+        if (!row) return;
+        if (row.key === 'products') {
+          products = row.value || [];
+          safeStorageSet(STORAGE_KEY, JSON.stringify(products));
+        } else if (row.key === 'pending') {
+          pendingSubmissions = row.value || [];
+          safeStorageSet(PENDING_KEY, JSON.stringify(pendingSubmissions));
+        }
+        if (state.entered) render();
+      })
+      .subscribe();
+  } catch (err) {
+    console.error('Realtime Sync Error:', err);
+  }
+}
+
+const STATUS_LABEL_TH = { expired: 'หมดอายุแล้ว', urgent: 'เร่งด่วน', safe: 'ปลอดภัย' };
+const STATUS_COLOR = { expired: '#dc2626', urgent: '#d97706', safe: '#059669' };
+
+const WEEKDAYS_TH = ['อา', 'จ', 'อ', 'พ', 'พฤ', 'ศ', 'ส'];
+const MONTHS_TH = ['มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน', 'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'];
+
+const NAV_ITEMS = [
+  { id: 'dashboard', label: 'หน้าแรก', emoji: '🏠' },
+  { id: 'scanner', label: 'สแกน', emoji: '📷' },
+  { id: 'calendar', label: 'ปฏิทิน', emoji: '🗓️' },
+  { id: 'admin', label: 'แอดมิน', emoji: '🛠️' },
+];
+
+const FILTER_CHIPS = [
+  { id: 'all', label: 'ทั้งหมด' },
+  { id: 'expired', label: '🔴 หมดอายุแล้ว' },
+  { id: 'urgent', label: '🟡 เร่งด่วน' },
+  { id: 'safe', label: '🟢 ปลอดภัย' },
+];
+
+// ==================== State ====================
+const state = {
+  entered: false,
+  isAdminSession: false,
+  tab: 'dashboard',
+  search: '',
+  filter: 'all',
+  cal: { year: new Date().getFullYear(), month: new Date().getMonth() + 1, selected: null },
+  scanner: { scannedCode: null, showHistory: true },
+};
+
+let html5QrCode = null;
+let pendingLoginSuccess = null;
+let pendingRestoreProducts = null;
+
+// ==================== Storage ====================
+function seedProducts() {
+  const today = new Date();
+  const offset = (days) => {
+    const d = new Date(today);
+    d.setDate(d.getDate() + days);
+    return d.toISOString().slice(0, 10);
+  };
+  return [
+    { id: 1, barcode: '8851234567890', name: 'นมสดพาสเจอร์ไรส์ 1 ลิตร', category: 'นม/ผลิตภัณฑ์นม', imageUrl: '', expiryDate: offset(-1), notes: 'หมดอายุแล้ว - ตัวอย่าง', addedDate: today.toISOString() },
+    { id: 2, barcode: '8859012345671', name: 'ขนมปังโฮลวีต', category: 'เบเกอรี่', imageUrl: '', expiryDate: offset(2), notes: 'เร่งด่วน - ตัวอย่าง', addedDate: today.toISOString() },
+    { id: 3, barcode: '40123456', name: 'โยเกิร์ตรสธรรมชาติ', category: 'นม/ผลิตภัณฑ์นม', imageUrl: '', expiryDate: offset(5), notes: '', addedDate: today.toISOString() },
+    { id: 4, barcode: '8850999888771', name: 'ไข่ไก่เบอร์ 1 แพ็ค 10', category: 'ไข่', imageUrl: '', expiryDate: offset(14), notes: '', addedDate: today.toISOString() },
+    { id: 5, barcode: 'CUST0001', name: 'ผักกาดขาวออร์แกนิก', category: 'ผัก/ผลไม้', imageUrl: '', expiryDate: offset(30), notes: 'บาร์โค้ดแบบกำหนดเอง', addedDate: today.toISOString() },
+  ];
+}
+
+let storageAvailable = true;
+const memoryStore = {};
+
+function safeStorageGet(key) {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    storageAvailable = false;
+    return key in memoryStore ? memoryStore[key] : null;
+  }
+}
+function safeStorageSet(key, value) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    storageAvailable = false;
+    memoryStore[key] = value;
+  }
+}
+
+function loadProducts() {
+  const raw = safeStorageGet(STORAGE_KEY);
+  if (!raw) {
+    const seeded = seedProducts();
+    saveProducts(seeded);
+    return seeded;
+  }
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return seedProducts();
+  }
+}
+function saveProducts(list) {
+  safeStorageSet(STORAGE_KEY, JSON.stringify(list));
+}
+
+function isAdmin() { return state.isAdminSession === true; }
+function setAdmin(value) { state.isAdminSession = !!value; }
+
+function generateLocalId() {
+  return Date.now() * 1000 + Math.floor(Math.random() * 1000);
+}
+
+function loadPending() {
+  const raw = safeStorageGet(PENDING_KEY);
+  try {
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+function savePending(list) {
+  safeStorageSet(PENDING_KEY, JSON.stringify(list));
+}
+
+let products = [];
+let pendingSubmissions = [];
+
+async function bootstrapData() {
+  try {
+    if (sb) {
+      const [cloudProducts, cloudPending] = await Promise.all([cloudGet('products'), cloudGet('pending')]);
+      if (cloudProducts !== null) {
+        products = cloudProducts;
+        safeStorageSet(STORAGE_KEY, JSON.stringify(products));
+      } else {
+        products = loadProducts();
+        cloudSet('products', products);
+      }
+      if (cloudPending !== null) {
+        pendingSubmissions = cloudPending;
+        safeStorageSet(PENDING_KEY, JSON.stringify(pendingSubmissions));
+      } else {
+        pendingSubmissions = loadPending();
+        cloudSet('pending', pendingSubmissions);
+      }
+    } else {
+      products = loadProducts();
+      pendingSubmissions = loadPending();
+    }
+  } catch (err) {
+    console.error('Bootstrap Error:', err);
+    products = loadProducts();
+    pendingSubmissions = loadPending();
+  }
+}
+
+// ==================== Domain helpers ====================
+function getStatus(expiryDateStr) {
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const exp = new Date(expiryDateStr + 'T00:00:00');
+  const diffDays = Math.ceil((exp - today) / 86400000);
+  if (diffDays < 0) return 'expired';
+  if (diffDays <= URGENT_WINDOW_DAYS) return 'urgent';
+  return 'safe';
+}
+function daysUntil(expiryDateStr) {
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const exp = new Date(expiryDateStr + 'T00:00:00');
+  return Math.ceil((exp - today) / 86400000);
+}
+function withComputed(p) { return { ...p, status: getStatus(p.expiryDate), daysLeft: daysUntil(p.expiryDate) }; }
+function formatThaiDate(dateStr) {
+  return new Date(dateStr + 'T00:00:00').toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+function computeStats() {
+  const counts = { expired: 0, urgent: 0, safe: 0 };
+  products.forEach((p) => counts[getStatus(p.expiryDate)]++);
+  return counts;
+}
+
+function detectBarcodeType(raw) {
+  const code = (raw ?? '').trim();
+  if (/^\d{13}$/.test(code)) return 'EAN-13';
+  if (/^\d{12}$/.test(code)) return 'UPC-A';
+  if (/^\d{8}$/.test(code)) return 'EAN-8';
+  if (/^[A-Za-z0-9]{4,}$/.test(code) && /[A-Za-z]/.test(code)) return 'CODE128';
+  if (code.length >= 4) return 'CUSTOM';
+  return 'INVALID';
+}
+function isValidBarcode(code) { return detectBarcodeType(code) !== 'INVALID'; }
+const BARCODE_TYPE_LABEL_TH = {
+  'EAN-13': 'EAN-13 (13 หลัก)', 'EAN-8': 'EAN-8 (8 หลัก)', 'UPC-A': 'UPC-A (12 หลัก)',
+  CODE128: 'Code128', CUSTOM: 'บาร์โค้ดกำหนดเอง', INVALID: 'รูปแบบไม่ถูกต้อง',
+};
+
+function escapeHtml(str) {
+  return String(str ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function playBeep() {
+  try {
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    if (!AudioCtx) return;
+    const ctx = new AudioCtx();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.value = 1046;
+    gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.25, ctx.currentTime + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.13);
+    osc.connect(gain); gain.connect(ctx.destination);
+    osc.start(); osc.stop(ctx.currentTime + 0.14);
+    osc.onended = () => ctx.close();
+  } catch { /* เบราว์เซอร์บล็อก autoplay เสียง - ไม่ต้องทำอะไร */ }
+}
+
+function basketIconSVG(size, color, strokeWidth) {
+  size = size || 24; color = color || '#047857'; strokeWidth = strokeWidth || 2;
+  return `
+    <svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M5.5 9h13l-1.4 9.3a2 2 0 0 1-2 1.7H8.9a2 2 0 0 1-2-1.7L5.5 9Z"/>
+      <path d="M9 9V6.5a3 3 0 0 1 6 0V9"/>
+      <path d="M9.5 13v3.2"/>
+      <path d="M12 13v3.2"/>
+      <path d="M14.5 13v3.2"/>
+    </svg>`;
+}
+function basketFilledSVG(size, color) {
+  size = size || 24; color = color || '#047857';
+  return `
+    <svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="${color}">
+      <path d="M5.5 9h13l-1.4 9.3a2 2 0 0 1-2 1.7H8.9a2 2 0 0 1-2-1.7L5.5 9Z" />
+      <path d="M9 9V6.5a3 3 0 0 1 6 0V9h-1.6V6.5a1.4 1.4 0 0 0-2.8 0V9H9Z" />
+    </svg>`;
+}
+
+function freshnessRingSVG(daysLeft, status, size) {
+  size = size || 64;
+  const stroke = 6;
+  const radius = (size - stroke) / 2;
+  const circumference = 2 * Math.PI * radius;
+  const ratio = status === 'expired' ? 0 : Math.min(Math.max(daysLeft, 0), 30) / 30;
+  const dashOffset = circumference * (1 - ratio);
+  const color = STATUS_COLOR[status];
+  const c = size / 2;
+  return `
+    <div class="relative shrink-0" style="width:${size}px;height:${size}px;">
+      <svg width="${size}" height="${size}" class="-rotate-90">
+        <circle cx="${c}" cy="${c}" r="${radius}" stroke="#e3efe7" stroke-width="${stroke}" fill="none" />
+        <circle cx="${c}" cy="${c}" r="${radius}" stroke="${color}" stroke-width="${stroke}" fill="none"
+          stroke-dasharray="${circumference}" stroke-dashoffset="${dashOffset}" stroke-linecap="round"
+          style="transition: stroke-dashoffset .4s ease;" />
+      </svg>
+      <div class="absolute inset-0 flex flex-col items-center justify-center">
+        <span class="text-xl font-extrabold leading-none" style="color:${color}">${status === 'expired' ? '!' : daysLeft}</span>
+        ${status !== 'expired' ? '<span class="text-[10px] font-semibold text-stone-500">วัน</span>' : ''}
+      </div>
+    </div>`;
+}
+
+function statusBadgeHTML(status) {
+  const styles = {
+    expired: 'bg-red-50 text-red-600 ring-1 ring-red-200',
+    urgent: 'bg-amber-50 text-amber-600 ring-1 ring-amber-200',
+    safe: 'bg-brand-50 text-brand-700 ring-1 ring-brand-200',
+  };
+  return `<span class="rounded-full px-2 py-0.5 text-[10px] font-bold ${styles[status]}">${STATUS_LABEL_TH[status]}</span>`;
+}
+
+function productThumbHTML(p) {
+  if (p.imageUrl) return `<img src="${p.imageUrl}" class="h-14 w-14 shrink-0 rounded-xl object-cover ring-1 ring-stone-100" />`;
+  return `<div class="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl bg-brand-50 text-2xl">📦</div>`;
+}
+
+function statCardHTML(label, count, colorClass, active, onclickAttr) {
+  return `
+    <button onclick="${onclickAttr}" class="flex flex-1 flex-col items-start gap-1 rounded-2xl px-3 py-3 text-left ring-1 transition-all ${colorClass} ${active ? 'scale-[1.02] shadow-card ring-2' : 'ring-1'}">
+      <span class="text-2xl font-bold leading-none">${count}</span>
+      <span class="text-xs font-medium opacity-80">${label}</span>
+    </button>`;
+}
+
+function productCardHTML(p, opts) {
+  opts = opts || {};
+  const showActions = !!opts.showActions;
+  return `
+    <div class="flex items-center gap-3 rounded-2xl bg-white p-3 shadow-card ring-1 ring-brand-100/60">
+      ${productThumbHTML(p)}
+      <div class="min-w-0 flex-1">
+        <div class="flex items-center justify-between gap-2">
+          <p class="truncate text-sm font-semibold text-stone-800">${escapeHtml(p.name)}</p>
+          ${statusBadgeHTML(p.status)}
+        </div>
+        <p class="mt-0.5 truncate text-xs text-stone-400">${p.category ? escapeHtml(p.category) + ' · ' : ''}${escapeHtml(p.barcode)}</p>
+        <p class="mt-1 text-xs text-stone-500">หมดอายุ ${formatThaiDate(p.expiryDate)}</p>
+      </div>
+      ${showActions ? `
+        <div class="flex shrink-0 flex-col gap-1.5">
+          <button onclick="openProductForm(${p.id})" class="rounded-full bg-brand-50 p-1.5 text-brand-700 active:scale-95" aria-label="แก้ไข">✏️</button>
+          <button onclick="confirmDeleteProduct(${p.id})" class="rounded-full bg-red-50 p-1.5 text-red-600 active:scale-95" aria-label="ลบ">🗑️</button>
+        </div>` : ''}
+    </div>`;
+}
+
+function bottomNavHTML() {
+  const stats = computeStats();
+  return `
+    <nav id="bottom-nav" class="fixed inset-x-0 bottom-0 z-20 border-t border-brand-100 bg-white/95 backdrop-blur-sm">
+      <div class="mx-auto flex max-w-md items-stretch justify-between px-2" style="padding-bottom: env(safe-area-inset-bottom);">
+        ${NAV_ITEMS.map((item) => {
+          const isActive = state.tab === item.id;
+          let badge = '';
+          if (item.id === 'scanner' && stats.urgent > 0) {
+            badge = `<span class="absolute -right-2 -top-2 flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-bold text-white">${stats.urgent > 9 ? '9+' : stats.urgent}</span>`;
+          }
+          if (item.id === 'admin' && isAdmin() && pendingSubmissions.length > 0) {
+            badge = `<span class="absolute -right-2 -top-2 flex h-4 min-w-4 items-center justify-center rounded-full bg-sky-500 px-1 text-[10px] font-bold text-white">${pendingSubmissions.length > 9 ? '9+' : pendingSubmissions.length}</span>`;
+          }
+          return `
+            <button onclick="setTab('${item.id}')" class="relative flex flex-1 flex-col items-center gap-1 py-2.5 text-xs font-medium transition-colors ${isActive ? 'text-brand-600' : 'text-stone-400'}">
+              <span class="relative text-[20px] leading-none">${item.emoji}${badge}</span>
+              ${item.label}
+            </button>`;
+        }).join('')}
+      </div>
+    </nav>`;
+}
+
+// ==================== Modal helpers ====================
+function openModal(html) { document.getElementById('modal-root').innerHTML = html; }
+function closeModal() { document.getElementById('modal-root').innerHTML = ''; }
+
+function refreshCurrentTabData() {
+  const nav = document.querySelector('#bottom-nav');
+  if (nav) nav.outerHTML = bottomNavHTML();
+  renderPage();
+}
+
+// ==================== Landing / entry page ====================
+function landingHTML() {
+  return `
+    <div class="relative min-h-screen overflow-hidden bg-gradient-to-br from-brand-800 via-brand-700 to-brand-900 flex flex-col items-center justify-center px-6 text-center">
+      <div class="pointer-events-none absolute -top-12 -left-14 opacity-20 blur-2xl">${basketFilledSVG(220, '#ffffff')}</div>
+      <div class="pointer-events-none absolute top-1/4 -right-16 opacity-15 blur-3xl" style="transform: rotate(15deg);">${basketFilledSVG(260, '#bbf7d6')}</div>
+      <div class="pointer-events-none absolute bottom-0 left-1/4 opacity-10 blur-2xl">${basketFilledSVG(200, '#ffffff')}</div>
+      <div class="pointer-events-none absolute bottom-10 -right-10 opacity-15 blur-2xl" style="transform: rotate(-10deg);">${basketFilledSVG(180, '#bbf7d6')}</div>
+      <div class="pointer-events-none absolute top-10 left-1/3 opacity-10 blur-2xl" style="transform: rotate(8deg);">${basketFilledSVG(140, '#ffffff')}</div>
+
+      <div class="relative z-10 flex flex-col items-center">
+        <div class="flex h-24 w-24 items-center justify-center rounded-3xl bg-white shadow-2xl">
+          ${basketIconSVG(48, '#047857', 2)}
+        </div>
+        <h1 class="mt-6 text-2xl font-bold text-white">Rimping Expiry Tracker</h1>
+        <p class="mt-2 max-w-xs text-sm text-brand-100">ระบบติดตามวันหมดอายุสินค้า สำหรับพนักงาน Rimping Supermarket</p>
+        <button onclick="enterApp()" class="mt-8 inline-flex items-center justify-center rounded-full bg-white px-8 py-3 text-sm font-bold text-brand-700 shadow-xl transition-transform active:scale-95">
+          เข้าใช้งาน
+        </button>
+        <button onclick="landingAdminLogin()" class="mt-5 inline-flex items-center justify-center rounded-full bg-white/10 px-6 py-2.5 text-sm font-semibold text-white backdrop-blur-sm ring-1 ring-white/30 transition-colors active:scale-95 active:bg-white/20">
+          เข้าสู่ระบบแอดมิน
+        </button>
+      </div>
+    </div>`;
+}
+
+function enterApp() {
+  state.entered = true;
+  state.tab = 'dashboard';
+  render();
+}
+
+function landingAdminLogin() {
+  openAdminLogin(() => {
+    state.entered = true;
+    state.tab = 'admin';
+    render();
+  });
+}
+
+// ==================== Root render ====================
+function render() {
+  const app = document.getElementById('app');
+  if (!app) return;
+  if (!state.entered) {
+    app.innerHTML = landingHTML();
+    return;
+  }
+  app.innerHTML = `
+    <div class="min-h-screen bg-brand-50 pb-24 font-sans text-stone-800">
+      ${!storageAvailable ? `
+        <div class="bg-amber-500 px-4 py-2 text-center text-xs font-semibold text-white">
+          ⚠️ เบราว์เซอร์นี้ไม่อนุญาตให้บันทึกข้อมูลถาวร การเปลี่ยนแปลงจะหายไปเมื่อปิดหน้านี้ — ลองเปิดผ่าน Chrome/Safari ปกติ (ไม่ใช่ในแอปแชท) แทน
+        </div>` : ''}
+      <main class="mx-auto max-w-md px-4 pt-6" id="main"></main>
+    </div>
+    ${bottomNavHTML()}
+  `;
+  renderPage();
+}
+
+function renderPage() {
+  const main = document.getElementById('main');
+  if (!main) return;
+  if (state.tab === 'dashboard') { main.innerHTML = dashboardHTML(); initDashboard(); }
+  if (state.tab === 'scanner') { main.innerHTML = scannerHTML(); initScanner(); }
+  if (state.tab === 'calendar') { main.innerHTML = calendarHTML(); }
+  if (state.tab === 'admin') { main.innerHTML = adminHTML(); }
+}
+
+function setTab(tab) {
+  if (state.tab === 'scanner' && tab !== 'scanner') stopScanner();
+  state.tab = tab;
+  render();
+}
+
+// ==================== Dashboard ====================
+function dashboardHTML() {
+  return `
+    <div class="space-y-4">
+      <header class="flex items-center gap-2">
+        <span class="flex items-center justify-center rounded-xl bg-brand-700 p-2">${basketIconSVG(20, '#ffffff', 2)}</span>
+        <div>
+          <h1 class="text-lg font-bold text-stone-800">Rimping Expiry Tracker</h1>
+          <p class="text-xs text-stone-400">ตรวจสอบวันหมดอายุสินค้าได้ในที่เดียว</p>
+        </div>
+      </header>
+      <div class="grid grid-cols-3 gap-2" id="stat-cards">${statCardsHTML()}</div>
+      <div class="relative">
+        <span class="absolute left-3 top-1/2 -translate-y-1/2 text-stone-400">🔍</span>
+        <input id="search-input" placeholder="ค้นหาชื่อสินค้าหรือบาร์โค้ด..." class="w-full rounded-xl border border-stone-200 bg-white py-2.5 pl-9 pr-3 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100" />
+      </div>
+      <div id="filter-chips" class="no-scrollbar -mx-1 flex gap-2 overflow-x-auto px-1">${filterChipsHTML()}</div>
+      <div id="product-list" class="space-y-2.5">${productListHTML()}</div>
+    </div>`;
+}
+
+function statCardsHTML() {
+  const stats = computeStats();
+  return `
+    ${statCardHTML('หมดอายุแล้ว', stats.expired, 'bg-red-50 text-red-600 ring-red-200', state.filter === 'expired', "setFilter('expired')")}
+    ${statCardHTML('เร่งด่วน', stats.urgent, 'bg-amber-50 text-amber-600 ring-amber-200', state.filter === 'urgent', "setFilter('urgent')")}
+    ${statCardHTML('ปลอดภัย', stats.safe, 'bg-brand-50 text-brand-700 ring-brand-200', state.filter === 'safe', "setFilter('safe')")}
+  `;
+}
+
+function filterChipsHTML() {
+  return FILTER_CHIPS.map((chip) => `
+    <button onclick="setFilter('${chip.id}', true)" class="shrink-0 rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${state.filter === chip.id ? 'bg-brand-600 text-white' : 'bg-white text-stone-500 ring-1 ring-stone-200'}">${chip.label}</button>
+  `).join('');
+}
+
+function getFilteredProducts() {
+  const search = state.search.trim().toLowerCase();
+  let list = products.map(withComputed);
+  if (search) list = list.filter((p) => (p.name || '').toLowerCase().includes(search) || (p.barcode || '').toLowerCase().includes(search));
+  if (state.filter !== 'all') list = list.filter((p) => p.status === state.filter);
+  list.sort((a, b) => (a.expiryDate || '').localeCompare(b.expiryDate || '') || (a.name || '').localeCompare(b.name || ''));
+  return list;
+}
+
+function productListHTML() {
+  const list = getFilteredProducts();
+  if (list.length === 0) {
+    return `
+      <div class="rounded-2xl bg-white py-10 text-center shadow-card ring-1 ring-brand-100/60">
+        <p class="text-sm font-medium text-stone-500">ไม่พบสินค้าตามเงื่อนไขนี้</p>
+        <p class="mt-1 text-xs text-stone-400">ลองเปลี่ยนคำค้นหาหรือตัวกรองสถานะ</p>
+      </div>`;
+  }
+  return list.map((p) => productCardHTML(p)).join('');
+}
+
+function initDashboard() {
+  const input = document.getElementById('search-input');
+  if (!input) return;
+  input.value = state.search;
+  input.addEventListener('input', (e) => {
+    state.search = e.target.value;
+    const listEl = document.getElementById('product-list');
+    if (listEl) listEl.innerHTML = productListHTML();
+  });
+}
+
+function setFilter(filterId, fromChip) {
+  state.filter = fromChip ? filterId : (state.filter === filterId ? 'all' : filterId);
+  const cardsEl = document.getElementById('stat-cards');
+  if (cardsEl) cardsEl.innerHTML = statCardsHTML();
+  const chipsEl = document.getElementById('filter-chips');
+  if (chipsEl) chipsEl.innerHTML = filterChipsHTML();
+  const listEl = document.getElementById('product-list');
+  if (listEl) listEl.innerHTML = productListHTML();
+}
+
+// ==================== Scanner ====================
+function pendingHistoryHTML() {
+  if (pendingSubmissions.length === 0) {
+    return `<p class="py-3 text-center text-xs text-stone-400">ยังไม่มีคำขอที่ส่งไป</p>`;
+  }
+  return pendingSubmissions.slice().reverse().map((item) => {
+    const photo = item.productPhoto || item.imageUrl || '';
+    const label = item.name ? item.name : (item.barcode ? `บาร์โค้ด: ${item.barcode}` : 'สินค้าชั่งอิชิดะ (ยังไม่ระบุชื่อ)');
+    return `
+    <div class="flex items-center gap-3 rounded-xl bg-white p-2.5 shadow-card ring-1 ring-stone-100">
+      ${photo
+        ? `<img src="${photo}" class="h-12 w-12 shrink-0 rounded-lg object-cover" />`
+        : `<div class="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-stone-100 text-base">📦</div>`}
+      <div class="min-w-0 flex-1">
+        <p class="truncate text-sm font-medium text-stone-700">${escapeHtml(label)}</p>
+        <p class="text-[11px] text-stone-400">วันหมดอายุ: ${item.expiryDate ? formatThaiDate(item.expiryDate) : 'ไม่ระบุ'}</p>
+      </div>
+      <span class="shrink-0 rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700">รออนุมัติ</span>
+    </div>`;
+  }).join('');
+}
+
+function toggleScanHistory() {
+  state.scanner.showHistory = !state.scanner.showHistory;
+  renderPage();
+}
+
+function scannerHTML() {
+  return `
+    <div class="space-y-4 pb-2">
+      <header class="flex items-center gap-2">
+        <span class="rounded-xl bg-brand-600 p-2 text-white text-lg">📷</span>
+        <div>
+          <h1 class="text-lg font-bold text-stone-800">สแกนบาร์โค้ด</h1>
+          <p class="text-xs text-stone-400">วางบาร์โค้ดให้อยู่ในกรอบเพื่อสแกน</p>
+        </div>
+      </header>
+
+      <div class="relative overflow-hidden rounded-2xl bg-black shadow-card" style="aspect-ratio: 4/3;">
+        <div id="qr-reader" class="h-full w-full"></div>
+        <div id="camera-status" class="absolute inset-0 flex items-center justify-center text-xs text-white/70">กำลังเปิดกล้อง...</div>
+        <div id="camera-frame" class="pointer-events-none absolute inset-6 rounded-xl border-2 border-brand-400 hidden"></div>
+      </div>
+
+      <button type="button" onclick="document.getElementById('scan-image-input').click()" class="flex w-full items-center justify-center gap-1.5 rounded-xl bg-white py-2.5 text-xs font-semibold text-brand-700 ring-1 ring-brand-200 active:scale-95">
+        🖼️ แทรกรูปภาพเพื่อสแกนบาร์โค้ด
+      </button>
+      <input id="scan-image-input" type="file" accept="image/*" class="hidden" onchange="handleScanImageFile(event)" />
+      <div id="file-scan-temp" class="hidden"></div>
+
+      <form id="manual-form" class="flex gap-2">
+        <input id="manual-input" placeholder="หรือพิมพ์บาร์โค้ดด้วยตนเอง" class="flex-1 rounded-xl border border-stone-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100" />
+        <button type="submit" class="rounded-xl bg-brand-600 px-4 text-white active:scale-95">🔍</button>
+      </form>
+
+      <div id="scan-result"></div>
+
+      <button onclick="openNoBarcodeFlow()" class="flex w-full items-center justify-center gap-2 rounded-xl bg-white py-3 text-sm font-semibold text-brand-700 shadow-card ring-1 ring-brand-200 active:scale-95">
+        ✏️ สินค้าชั่งจากเครื่องชั่งอิชิดะ? เพิ่มด้วยชื่อ
+      </button>
+
+      ${!isAdmin() ? `
+        <button onclick="openSubmissionModal()" class="flex w-full items-center justify-center gap-2 rounded-xl bg-sky-600 py-3 text-sm font-semibold text-white shadow-card active:scale-95">
+          📋 ไม่พบสินค้าที่ต้องการ? แจ้งเพิ่มสินค้าใหม่
+        </button>` : ''}
+
+      <button onclick="toggleScanHistory()" class="flex w-full items-center justify-between rounded-xl bg-white px-4 py-3 text-sm font-semibold text-stone-600 shadow-card ring-1 ring-stone-100 active:scale-95">
+        <span>📋 ประวัติการขอ (รออนุมัติ) ${pendingSubmissions.length} รายการ</span>
+        <span>${state.scanner.showHistory ? '▲' : '▼'}</span>
+      </button>
+      ${state.scanner.showHistory ? `<div class="space-y-2">${pendingHistoryHTML()}</div>` : ''}
+    </div>`;
+}
+
+function initScanner() {
+  const form = document.getElementById('manual-form');
+  if (form) {
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const code = document.getElementById('manual-input').value.trim();
+      if (code) handleScanResult(code);
+    });
+  }
+  startScanner();
+}
+
+function handleScanImageFile(e) {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (!file) return;
+  const resultEl = document.getElementById('scan-result');
+  if (resultEl) {
+    resultEl.innerHTML = `<div class="rounded-2xl bg-white p-4 text-center text-xs text-stone-400 shadow-card ring-1 ring-brand-100/60">กำลังอ่านบาร์โค้ดจากรูปภาพ...</div>`;
+  }
+  if (!window.Html5Qrcode) {
+    if (resultEl) resultEl.innerHTML = `<p class="text-xs text-red-600">ไม่พบไลบรารีสแกน กรุณาตรวจสอบการเชื่อมต่ออินเทอร์เน็ต</p>`;
+    return;
+  }
+  const fileScanner = new Html5Qrcode('file-scan-temp');
+  fileScanner
+    .scanFile(file, false)
+    .then((decodedText) => {
+      playBeep();
+      handleScanResult(decodedText);
+      try { fileScanner.clear(); } catch {}
+    })
+    .catch(() => {
+      if (resultEl) {
+        resultEl.innerHTML = `
+          <div class="rounded-2xl bg-white p-4 text-center shadow-card ring-1 ring-brand-100/60">
+            <p class="text-xs text-red-600">ไม่พบบาร์โค้ดในรูปภาพนี้</p>
+            <p class="mt-1 text-[11px] text-stone-400">ลองรูปอื่น หรือพิมพ์บาร์โค้ดด้วยตนเองด้านล่าง</p>
+          </div>`;
+      }
+      try { fileScanner.clear(); } catch {}
+    });
+}
+
+function startScanner() {
+  if (!window.Html5Qrcode) {
+    const statusEl = document.getElementById('camera-status');
+    if (statusEl) statusEl.textContent = 'ไม่พบไลบรารีกล้อง (ต้องต่ออินเทอร์เน็ตเพื่อโหลด html5-qrcode)';
+    return;
+  }
+  html5QrCode = new Html5Qrcode('qr-reader');
+  html5QrCode
+    .start(
+      { facingMode: 'environment' },
+      { fps: 10, qrbox: { width: 250, height: 150 } },
+      (decodedText) => { playBeep(); handleScanResult(decodedText); },
+      () => { /* ไม่เจอบาร์โค้ดในเฟรมนี้ - ไม่ต้องทำอะไร */ },
+    )
+    .then(() => {
+      const statusEl = document.getElementById('camera-status');
+      if (statusEl) statusEl.remove();
+      const frame = document.getElementById('camera-frame');
+      if (frame) frame.classList.remove('hidden');
+    })
+    .catch((err) => {
+      console.error(err);
+      const statusEl = document.getElementById('camera-status');
+      if (statusEl) {
+        statusEl.innerHTML = `
+          <div class="flex flex-col items-center gap-2 px-6 text-center">
+            <span class="text-2xl">📵</span>
+            <span>ไม่สามารถเข้าถึงกล้องได้ กรุณาอนุญาตการใช้กล้อง หรือกรอกบาร์โค้ดด้วยตนเองด้านล่าง<br><span class="text-[10px] text-white/50">(กล้องต้องเปิดผ่าน HTTPS หรือ localhost)</span></span>
+          </div>`;
+      }
+    });
+}
+
+function stopScanner() {
+  if (html5QrCode) {
+    const instance = html5QrCode;
+    html5QrCode = null;
+    instance.stop().catch(() => {}).finally(() => { try { instance.clear(); } catch {} });
+  }
+}
+
+function handleScanResult(code) {
+  state.scanner.scannedCode = code;
+  const matches = products.map(withComputed).filter((p) => p.barcode === code);
+  const type = detectBarcodeType(code);
+  const resultEl = document.getElementById('scan-result');
+  if (!resultEl) return;
+
+  const addMoreLabel = matches.length > 0 ? 'เพิ่มอีกชุด (วันหมดอายุอื่น)' : 'เพิ่มสินค้าใหม่จากบาร์โค้ดนี้';
+  const submitMoreLabel = matches.length > 0 ? 'แจ้งเพิ่มสินค้าชุดใหม่ (วันหมดอายุอื่น)' : 'แจ้งเพิ่มสินค้าใหม่';
+  const action = isAdmin()
+    ? `<button onclick="handleAddFromScanCurrent()" class="flex w-full items-center justify-center gap-2 rounded-xl bg-brand-600 py-2.5 text-sm font-semibold text-white active:scale-95">➕ ${addMoreLabel}</button>`
+    : `<button onclick="openSubmissionModal()" class="flex w-full items-center justify-center gap-2 rounded-xl bg-sky-600 py-2.5 text-sm font-semibold text-white active:scale-95">📋 ${submitMoreLabel}</button>`;
+
+  resultEl.innerHTML = `
+    <div class="space-y-3 rounded-2xl bg-white p-4 shadow-card ring-1 ring-brand-100/60">
+      <div class="flex items-center justify-between">
+        <p class="text-sm font-semibold text-stone-700">บาร์โค้ด: ${escapeHtml(code)}</p>
+        <span class="rounded-full px-2 py-0.5 text-[11px] font-semibold ${isValidBarcode(code) ? 'bg-brand-50 text-brand-700' : 'bg-red-50 text-red-600'}">${BARCODE_TYPE_LABEL_TH[type]}</span>
+      </div>
+      ${matches.length > 1 ? `<p class="text-xs text-stone-400">พบสินค้านี้ในระบบ ${matches.length} ชุด (คนละวันหมดอายุ)</p>` : ''}
+      ${matches.length > 0
+        ? `<div class="space-y-2">${matches.map((p) => productCardHTML(p, { showActions: isAdmin() })).join('')}</div>`
+        : `<p class="text-xs text-stone-400">ไม่พบสินค้านี้ในระบบ</p>`}
+      ${action}
+    </div>`;
+}
+
+function handleAddFromScanCurrent() {
+  const code = state.scanner.scannedCode;
+  if (isAdmin()) openProductForm(null, code);
+  else openAdminLogin(() => openProductForm(null, code));
+}
+
+// ==================== Public submission ====================
+function openSubmissionModal() {
+  const prefillBarcode = state.scanner.scannedCode || '';
+  openModal(`
+    <div class="fixed inset-0 z-50 flex items-end justify-center bg-black/40 sm:items-center sm:p-4">
+      <div class="max-h-[92vh] w-full max-w-md overflow-y-auto rounded-t-2xl bg-white p-5 sm:rounded-2xl">
+        <div class="flex items-center justify-between">
+          <h3 class="text-base font-bold text-stone-800">📋 แจ้งเพิ่มสินค้าใหม่</h3>
+          <button onclick="closeModal()" class="text-stone-400">✕</button>
+        </div>
+        <p class="mt-1 text-xs text-stone-400">ถ่ายรูปหน้าสินค้า (รูปหลังไม่บังคับ) ใส่วันหมดอายุ และใส่ชื่อสินค้าได้เลยถ้าทราบ (ถ้าไม่ทราบ แอดมินจะดูจากรูปแล้วใส่ชื่อให้) เมื่ออนุมัติแล้วจะเข้าระบบทันที</p>
+
+        <form id="submission-form" class="mt-4 space-y-3">
+          <div>
+            <label class="mb-1 block text-xs font-medium text-stone-500">ชื่อสินค้า (ถ้าทราบ)</label>
+            <input id="submission-name" placeholder="เช่น ซีพี - ไส้กรอกเวียนนา" class="w-full rounded-xl border border-stone-200 px-3 py-2.5 text-sm outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-100" />
+            <p class="mt-1 text-[11px] text-amber-600">💡 แนะนำให้ใส่ชื่อบริษัท/ยี่ห้อก่อนเสมอ แล้วตามด้วยชื่อสินค้า</p>
+          </div>
+
+          <div>
+            <label class="mb-1 block text-xs font-medium text-stone-500">1) รูปหน้าสินค้า *</label>
+            <label class="flex flex-col items-center justify-center gap-1 rounded-xl border-2 border-dashed border-sky-200 bg-sky-50/50 py-4 text-sky-700 cursor-pointer">
+              <div id="submission-product-preview"><span class="text-2xl">📷</span><span class="text-xs font-medium block mt-1">ถ่ายรูปหรือเลือกรูปหน้าสินค้า</span></div>
+              <input id="submission-product-image" type="file" accept="image/*" capture="environment" class="hidden" />
+            </label>
+          </div>
+
+          <div>
+            <label class="mb-1 block text-xs font-medium text-stone-500">2) รูปหลังสินค้า (ไม่บังคับ)</label>
+            <label class="flex flex-col items-center justify-center gap-1 rounded-xl border-2 border-dashed border-sky-200 bg-sky-50/50 py-4 text-sky-700 cursor-pointer">
+              <div id="submission-back-preview"><span class="text-2xl">📷</span><span class="text-xs font-medium block mt-1">ถ่ายรูปหรือเลือกรูปหลังสินค้า</span></div>
+              <input id="submission-back-image" type="file" accept="image/*" capture="environment" class="hidden" />
+            </label>
+          </div>
+
+          <div>
+            <label class="mb-1 block text-xs font-medium text-stone-500">3) วันหมดอายุ *</label>
+            <input id="submission-expiry" required type="date" class="w-full rounded-xl border border-stone-200 px-3 py-2.5 text-sm outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-100" />
+          </div>
+
+          <p id="submission-error" class="hidden text-xs font-medium text-red-600"></p>
+
+          <button type="submit" class="w-full rounded-xl bg-sky-600 py-2.5 text-sm font-semibold text-white active:scale-95">ส่งคำขอให้แอดมินอนุมัติ</button>
+        </form>
+      </div>
+    </div>
+  `);
+
+  let productImageData = '';
+  let backImageData = '';
+
+  const prodImgInput = document.getElementById('submission-product-image');
+  if (prodImgInput) {
+    prodImgInput.addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        productImageData = String(reader.result);
+        const preview = document.getElementById('submission-product-preview');
+        if (preview) preview.innerHTML = `<img src="${productImageData}" class="h-28 w-28 rounded-lg object-cover" />`;
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  const backImgInput = document.getElementById('submission-back-image');
+  if (backImgInput) {
+    backImgInput.addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        backImageData = String(reader.result);
+        const preview = document.getElementById('submission-back-preview');
+        if (preview) preview.innerHTML = `<img src="${backImageData}" class="h-28 w-28 rounded-lg object-cover" />`;
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  const form = document.getElementById('submission-form');
+  if (form) {
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const errEl = document.getElementById('submission-error');
+      const expiryDate = document.getElementById('submission-expiry').value;
+      const submitBtn = e.target.querySelector('button[type=submit]');
+
+      if (!productImageData) {
+        errEl.textContent = 'กรุณาถ่ายรูปหน้าสินค้า';
+        errEl.classList.remove('hidden');
+        return;
+      }
+      if (!expiryDate) {
+        errEl.textContent = 'กรุณาเลือกวันหมดอายุ';
+        errEl.classList.remove('hidden');
+        return;
+      }
+
+      if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = 'กำลังตรวจสอบ...'; }
+      if (sb) {
+        try {
+          const [freshProducts, freshPending] = await Promise.all([cloudGet('products'), cloudGet('pending')]);
+          if (freshProducts !== null) products = freshProducts;
+          if (freshPending !== null) pendingSubmissions = freshPending;
+        } catch (err) { console.error(err); }
+      }
+      if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = 'ส่งคำขอให้แอดมินอนุมัติ'; }
+
+      if (prefillBarcode) {
+        const alreadyApproved = products.some((p) => p.barcode === prefillBarcode && p.expiryDate === expiryDate);
+        if (alreadyApproved) {
+          errEl.textContent = 'สินค้าบาร์โค้ดนี้กับวันหมดอายุนี้มีอยู่ในระบบแล้ว ไม่ต้องส่งคำขอซ้ำค่ะ';
+          errEl.classList.remove('hidden');
+          return;
+        }
+        const alreadyPending = pendingSubmissions.some((p) => p.barcode === prefillBarcode && p.expiryDate === expiryDate);
+        if (alreadyPending) {
+          errEl.textContent = 'รายการนี้ได้ส่งคำขอไปแล้ว กำลังรอแอดมินอนุมัติอยู่ค่ะ';
+          errEl.classList.remove('hidden');
+          return;
+        }
+      }
+
+      const newPending = {
+        id: generateLocalId(),
+        barcode: prefillBarcode,
+        name: document.getElementById('submission-name').value.trim(),
+        productPhoto: productImageData,
+        backPhoto: backImageData,
+        expiryDate,
+        submittedAt: new Date().toISOString(),
+      };
+      pendingSubmissions.push(newPending);
+      savePending(pendingSubmissions);
+      cloudAppendItem('pending', newPending);
+      state.scanner.scannedCode = null;
+      showSubmissionSuccess();
+      refreshCurrentTabData();
+    });
+  }
+}
+
+function showSubmissionSuccess() {
+  openModal(`
+    <div class="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-4 sm:items-center" onclick="if(event.target===this) closeModal()">
+      <div class="w-full max-w-sm rounded-2xl bg-white p-6 text-center shadow-xl">
+        <p class="text-3xl">✅</p>
+        <h3 class="mt-2 text-base font-bold text-stone-800">ส่งคำขอเรียบร้อยแล้ว</h3>
+        <p class="mt-1 text-sm text-stone-500">ขอบคุณ! รอแอดมินตรวจสอบและอนุมัติ เมื่ออนุมัติแล้วสินค้าจะเข้าระบบทันที</p>
+        <button onclick="closeModal()" class="mt-4 w-full rounded-xl bg-brand-600 py-2.5 text-sm font-semibold text-white active:scale-95">ปิด</button>
+      </div>
+    </div>
+  `);
+}
+
+// ==================== No Barcode Flow ====================
+function generateNoBarcodeCode() {
+  let code;
+  do {
+    code = `NB${Date.now()}${Math.floor(Math.random() * 100)}`;
+  } while (products.some((p) => p.barcode === code));
+  return code;
+}
+
+function openNoBarcodeFlow() {
+  if (isAdmin()) openNoBarcodeProductForm();
+  else openNoBarcodeSubmissionModal();
+}
+
+function openNoBarcodeProductForm() {
+  openModal(`
+    <div class="fixed inset-0 z-50 flex items-end justify-center bg-black/40 sm:items-center sm:p-4">
+      <div class="max-h-[92vh] w-full max-w-md overflow-y-auto rounded-t-2xl bg-white p-5 sm:rounded-2xl">
+        <div class="flex items-center justify-between">
+          <h3 class="text-base font-bold text-stone-800">✏️ เพิ่มสินค้าชั่งจากเครื่องชั่งอิชิดะ</h3>
+          <button onclick="closeModal()" class="text-stone-400">✕</button>
+        </div>
+        <p class="mt-1 text-xs text-stone-400">ระบบจะออกโค้ดอ้างอิงให้อัตโนมัติแทนบาร์โค้ด</p>
+
+        <form id="nb-product-form" class="mt-4 space-y-3">
+          <label class="flex flex-col items-center justify-center gap-1 rounded-xl border-2 border-dashed border-brand-200 bg-brand-50/50 py-4 text-brand-600 cursor-pointer">
+            <div id="nb-image-preview"><span class="text-2xl">🖼️</span><span class="text-xs font-medium block mt-1">อัปโหลดรูปสินค้า</span></div>
+            <input id="nb-form-image" type="file" accept="image/*" capture="environment" class="hidden" />
+          </label>
+
+          <div>
+            <label class="mb-1 block text-xs font-medium text-stone-500">ชื่อสินค้า *</label>
+            <input id="nb-form-name" required class="w-full rounded-xl border border-stone-200 px-3 py-2.5 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100" />
+          </div>
+
+          <div>
+            <label class="mb-1 block text-xs font-medium text-stone-500">หมวดหมู่</label>
+            <input id="nb-form-category" class="w-full rounded-xl border border-stone-200 px-3 py-2.5 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100" placeholder="เช่น เบเกอรี่" />
+          </div>
+
+          <div>
+            <label class="mb-1 block text-xs font-medium text-stone-500">วันหมดอายุ *</label>
+            <input id="nb-form-expiry" required type="date" class="w-full rounded-xl border border-stone-200 px-3 py-2.5 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100" />
+          </div>
+
+          <div>
+            <label class="mb-1 block text-xs font-medium text-stone-500">หมายเหตุ</label>
+            <textarea id="nb-form-notes" rows="2" class="w-full rounded-xl border border-stone-200 px-3 py-2.5 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100"></textarea>
+          </div>
+
+          <p id="nb-form-error" class="hidden text-xs font-medium text-red-600"></p>
+
+          <button type="submit" class="w-full rounded-xl bg-brand-600 py-2.5 text-sm font-semibold text-white active:scale-95">เพิ่มสินค้า</button>
+        </form>
+      </div>
+    </div>
+  `);
+
+  let currentImageData = '';
+
+  const imgInput = document.getElementById('nb-form-image');
+  if (imgInput) {
+    imgInput.addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        currentImageData = String(reader.result);
+        const preview = document.getElementById('nb-image-preview');
+        if (preview) preview.innerHTML = `<img src="${currentImageData}" class="h-24 w-24 rounded-lg object-cover" />`;
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  const form = document.getElementById('nb-product-form');
+  if (form) {
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const name = document.getElementById('nb-form-name').value.trim();
+      const expiryDate = document.getElementById('nb-form-expiry').value;
+      const errEl = document.getElementById('nb-form-error');
+
+      if (!name) {
+        errEl.textContent = 'กรุณาใส่ชื่อสินค้า';
+        errEl.classList.remove('hidden');
+        return;
+      }
+      if (!expiryDate) {
+        errEl.textContent = 'กรุณาเลือกวันหมดอายุ';
+        errEl.classList.remove('hidden');
+        return;
+      }
+
+      const newId = generateLocalId();
+      const newProduct = {
+        id: newId,
+        barcode: generateNoBarcodeCode(),
+        name,
+        category: document.getElementById('nb-form-category').value.trim(),
+        imageUrl: currentImageData,
+        expiryDate,
+        notes: document.getElementById('nb-form-notes').value.trim(),
+        addedDate: new Date().toISOString(),
+      };
+      products.push(newProduct);
+      saveProducts(products);
+      cloudAppendItem('products', newProduct);
+      closeModal();
+      refreshCurrentTabData();
+    });
+  }
+}
+
+function openNoBarcodeSubmissionModal() {
+  openModal(`
+    <div class="fixed inset-0 z-50 flex items-end justify-center bg-black/40 sm:items-center sm:p-4">
+      <div class="max-h-[92vh] w-full max-w-md overflow-y-auto rounded-t-2xl bg-white p-5 sm:rounded-2xl">
+        <div class="flex items-center justify-between">
+          <h3 class="text-base font-bold text-stone-800">✏️ เพิ่มสินค้าชั่งจากเครื่องชั่งอิชิดะ</h3>
+          <button onclick="closeModal()" class="text-stone-400">✕</button>
+        </div>
+        <p class="mt-1 text-xs text-stone-400">ใส่ชื่อสินค้า รูป และวันหมดอายุ แล้วส่งให้แอดมินอนุมัติ เมื่ออนุมัติแล้วจะเข้าระบบทันที</p>
+
+        <form id="nbsub-form" class="mt-4 space-y-3">
+          <div>
+            <label class="mb-1 block text-xs font-medium text-stone-500">ชื่อสินค้า *</label>
+            <input id="nbsub-name" required class="w-full rounded-xl border border-stone-200 px-3 py-2.5 text-sm outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-100" />
+          </div>
+
+          <div>
+            <label class="mb-1 block text-xs font-medium text-stone-500">รูปสินค้า *</label>
+            <label class="flex flex-col items-center justify-center gap-1 rounded-xl border-2 border-dashed border-sky-200 bg-sky-50/50 py-4 text-sky-700 cursor-pointer">
+              <div id="nbsub-preview"><span class="text-2xl">📷</span><span class="text-xs font-medium block mt-1">ถ่ายรูปหรือเลือกรูปสินค้า</span></div>
+              <input id="nbsub-image" type="file" accept="image/*" capture="environment" class="hidden" />
+            </label>
+          </div>
+
+          <div>
+            <label class="mb-1 block text-xs font-medium text-stone-500">วันหมดอายุ *</label>
+            <input id="nbsub-expiry" required type="date" class="w-full rounded-xl border border-stone-200 px-3 py-2.5 text-sm outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-100" />
+          </div>
+
+          <p id="nbsub-error" class="hidden text-xs font-medium text-red-600"></p>
+
+          <button type="submit" class="w-full rounded-xl bg-sky-600 py-2.5 text-sm font-semibold text-white active:scale-95">ส่งคำขอให้แอดมินอนุมัติ</button>
+        </form>
+      </div>
+    </div>
+  `);
+
+  let productImageData = '';
+
+  const imgInput = document.getElementById('nbsub-image');
+  if (imgInput) {
+    imgInput.addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        productImageData = String(reader.result);
+        const preview = document.getElementById('nbsub-preview');
+        if (preview) preview.innerHTML = `<img src="${productImageData}" class="h-28 w-28 rounded-lg object-cover" />`;
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  const form = document.getElementById('nbsub-form');
+  if (form) {
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const errEl = document.getElementById('nbsub-error');
+      const name = document.getElementById('nbsub-name').value.trim();
+      const expiryDate = document.getElementById('nbsub-expiry').value;
+
+      if (!name) {
+        errEl.textContent = 'กรุณาใส่ชื่อสินค้า';
+        errEl.classList.remove('hidden');
+        return;
+      }
+      if (!productImageData) {
+        errEl.textContent = 'กรุณาถ่ายรูปสินค้า';
+        errEl.classList.remove('hidden');
+        return;
+      }
+      if (!expiryDate) {
+        errEl.textContent = 'กรุณาเลือกวันหมดอายุ';
+        errEl.classList.remove('hidden');
+        return;
+      }
+
+      const newPending = {
+        id: generateLocalId(),
+        barcode: '',
+        name,
+        expiryDate,
+        productPhoto: productImageData,
+        expiryPhoto: '',
+        submittedAt: new Date().toISOString(),
+      };
+      pendingSubmissions.push(newPending);
+      savePending(pendingSubmissions);
+      cloudAppendItem('pending', newPending);
+      showSubmissionSuccess();
+      refreshCurrentTabData();
+    });
+  }
+}
+
+function adminPendingListHTML() {
+  if (pendingSubmissions.length === 0) {
+    return `<p class="py-4 text-center text-xs text-stone-400">ยังไม่มีคำขอเพิ่มสินค้าใหม่</p>`;
+  }
+  return pendingSubmissions.map((item) => {
+    const productPhoto = item.productPhoto || item.imageUrl || '';
+    const secondPhoto = item.backPhoto || item.expiryPhoto || '';
+    const secondLabel = item.backPhoto ? '📷 รูปหลังสินค้า' : (item.expiryPhoto ? '📅 รูปวันหมดอายุ' : '📷 รูปหลังสินค้า');
+    return `
+    <div class="space-y-3 rounded-2xl bg-white p-3 shadow-card ring-1 ring-sky-100">
+      <div class="grid grid-cols-2 gap-2">
+        <div>
+          ${productPhoto
+            ? `<button type="button" onclick="viewPendingPhoto(${item.id}, 'product')" class="block w-full"><img src="${productPhoto}" class="h-32 w-full rounded-xl object-cover ring-1 ring-stone-100" /></button>`
+            : `<div class="flex h-32 w-full items-center justify-center rounded-xl bg-stone-100 text-xs text-stone-400">ไม่มีรูป</div>`}
+          <p class="mt-1 text-center text-[11px] text-stone-400">📷 รูปหน้าสินค้า</p>
+        </div>
+        <div>
+          ${secondPhoto
+            ? `<button type="button" onclick="viewPendingPhoto(${item.id}, 'second')" class="block w-full"><img src="${secondPhoto}" class="h-32 w-full rounded-xl object-cover ring-1 ring-stone-100" /></button>`
+            : `<div class="flex h-32 w-full items-center justify-center rounded-xl bg-stone-100 text-xs text-stone-400">ไม่มีรูป</div>`}
+          <p class="mt-1 text-center text-[11px] text-stone-400">${secondLabel}</p>
+        </div>
+      </div>
+
+      <div class="space-y-1.5">
+        <input id="pending-name-${item.id}" value="${escapeHtml(item.name || '')}" placeholder="ใส่ชื่อสินค้า (ดูจากรูป) *" class="w-full rounded-lg border border-stone-200 px-2 py-1.5 text-sm font-semibold outline-none focus:border-sky-500" />
+        <div class="flex gap-1.5">
+          <input id="pending-barcode-${item.id}" value="${escapeHtml(item.barcode || '')}" placeholder="บาร์โค้ด (ไม่บังคับ)" class="w-1/2 rounded-lg border border-stone-200 px-2 py-1.5 text-xs outline-none focus:border-sky-500" />
+          <input id="pending-expiry-${item.id}" type="date" value="${item.expiryDate || ''}" class="w-1/2 rounded-lg border border-stone-200 px-2 py-1.5 text-xs outline-none focus:border-sky-500" />
+        </div>
+      </div>
+
+      <p class="text-[11px] text-stone-400">ส่งคำขอเมื่อ ${formatThaiDate(item.submittedAt.slice(0, 10))}</p>
+      <div class="flex gap-2">
+        <button onclick="rejectPending(${item.id})" class="flex-1 rounded-lg bg-stone-100 py-1.5 text-xs font-semibold text-stone-600 active:scale-95">❌ ปฏิเสธ</button>
+        <button onclick="approvePending(${item.id})" class="flex-1 rounded-lg bg-brand-600 py-1.5 text-xs font-semibold text-white active:scale-95">✅ อนุมัติเข้าระบบ</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function viewPendingPhoto(id, which) {
+  const item = pendingSubmissions.find((p) => p.id === id);
+  if (!item) return;
+  const src = which === 'product' ? (item.productPhoto || item.imageUrl || '') : (item.backPhoto || item.expiryPhoto || '');
+  if (!src) return;
+  openModal(`
+    <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/85 p-4" onclick="closeModal()">
+      <img src="${src}" class="max-h-full max-w-full rounded-lg object-contain" />
+      <button onclick="closeModal()" class="absolute right-4 top-4 flex h-9 w-9 items-center justify-center rounded-full bg-white/20 text-white">✕</button>
+    </div>
+  `);
+}
+
+async function approvePending(id) {
+  const item = pendingSubmissions.find((p) => p.id === id);
+  if (!item) return;
+
+  const nameInput = document.getElementById(`pending-name-${id}`);
+  const expiryInput = document.getElementById(`pending-expiry-${id}`);
+  const barcodeInput = document.getElementById(`pending-barcode-${id}`);
+  
+  if (!nameInput || !expiryInput || !barcodeInput) return;
+
+  const name = nameInput.value.trim();
+  const expiryDate = expiryInput.value;
+  let barcode = barcodeInput.value.trim();
+
+  if (!name || !expiryDate) {
+    alert('กรุณาดูรูปแล้วใส่ชื่อสินค้าและวันหมดอายุให้ครบก่อนอนุมัติ');
+    return;
+  }
+  if (!barcode) barcode = `REQ${String(Date.now()).slice(-8)}`;
+
+  if (sb) {
+    try {
+      const freshProducts = await cloudGet('products');
+      if (freshProducts !== null) products = freshProducts;
+    } catch (err) { console.error(err); }
+  }
+  if (products.some((p) => p.barcode === barcode && p.expiryDate === expiryDate)) {
+    alert('สินค้าบาร์โค้ดนี้กับวันหมดอายุนี้มีอยู่ในระบบแล้ว ไม่ต้องเพิ่มซ้ำค่ะ');
+    return;
+  }
+
+  const newId = generateLocalId();
+  const newProduct = {
+    id: newId, barcode, name, category: '',
+    imageUrl: item.productPhoto || item.imageUrl || '',
+    expiryDate, notes: 'อนุมัติจากคำขอของผู้ใช้งาน', addedDate: new Date().toISOString(),
+  };
+  products.push(newProduct);
+  saveProducts(products);
+  cloudAppendItem('products', newProduct);
+
+  pendingSubmissions = pendingSubmissions.filter((p) => p.id !== id);
+  savePending(pendingSubmissions);
+  cloudRemoveItem('pending', id);
+  refreshCurrentTabData();
+}
+
+function rejectPending(id) {
+  pendingSubmissions = pendingSubmissions.filter((p) => p.id !== id);
+  savePending(pendingSubmissions);
+  cloudRemoveItem('pending', id);
+  refreshCurrentTabData();
+}
+
+// ==================== Calendar ====================
+function toDateKey(y, m, d) { return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`; }
+
+function calendarHTML() {
+  return `
+    <div class="space-y-4 pb-2">
+      <header class="flex items-center gap-2">
+        <span class="rounded-xl bg-brand-600 p-2 text-white text-lg">🗓️</span>
+        <div>
+          <h1 class="text-lg font-bold text-stone-800">ปฏิทินวันหมดอายุ</h1>
+          <p class="text-xs text-stone-400">แตะวันที่เพื่อดูสินค้าที่หมดอายุในวันนั้น</p>
+        </div>
+      </header>
+      <div class="rounded-2xl bg-white p-4 shadow-card ring-1 ring-brand-100/60" id="calendar-card">${calendarCardHTML()}</div>
+      <div id="calendar-day-list">${calendarDayListHTML()}</div>
+    </div>`;
+}
+
+function monthSummary(year, month) {
+  const prefix = `${year}-${String(month).padStart(2, '0')}-`;
+  const summary = {};
+  products.forEach((p) => { 
+    if (p.expiryDate && p.expiryDate.startsWith(prefix)) {
+      summary[p.expiryDate] = { status: getStatus(p.expiryDate) }; 
+    }
+  });
+  return summary;
+}
+
+function calendarCardHTML() {
+  const { year, month } = state.cal;
+  const summary = monthSummary(year, month);
+  const firstDay = new Date(year, month - 1, 1).getDay();
+  const daysInMonth = new Date(year, month, 0).getDate();
+  const rows = [];
+  let cells = [];
+  for (let i = 0; i < firstDay; i++) cells.push('<div class="h-10"></div>');
+  for (let d = 1; d <= daysInMonth; d++) {
+    const key = toDateKey(year, month, d);
+    const hasItems = key in summary;
+    const isSelected = state.cal.selected === key;
+    cells.push(`
+      <button onclick="selectCalDay('${key}')" class="relative flex h-10 w-full items-center justify-center rounded-lg text-sm font-medium transition-all ${isSelected ? 'bg-brand-600 text-white' : 'text-stone-600 active:bg-brand-50'}">
+        ${d}
+        ${hasItems ? `<span class="absolute bottom-1.5 h-1 w-1 rounded-full" style="background-color: ${isSelected ? '#fff' : STATUS_COLOR[summary[key].status]}"></span>` : ''}
+      </button>`);
+    if (cells.length === 7) { rows.push(`<div class="grid grid-cols-7 gap-1">${cells.join('')}</div>`); cells = []; }
+  }
+  if (cells.length > 0) {
+    while (cells.length < 7) cells.push('<div class="h-10"></div>');
+    rows.push(`<div class="grid grid-cols-7 gap-1">${cells.join('')}</div>`);
+  }
+  return `
+    <div class="flex items-center justify-between px-1 pb-4">
+      <button onclick="changeMonth(-1)" class="rounded-lg p-1.5 text-stone-400 active:bg-stone-50">❮</button>
+      <h2 class="text-sm font-bold text-stone-800">${MONTHS_TH[month - 1]} ${year + 543}</h2>
+      <button onclick="changeMonth(1)" class="rounded-lg p-1.5 text-stone-400 active:bg-stone-50">❯</button>
+    </div>
+    <div class="mb-1 grid grid-cols-7 gap-1 text-center text-[10px] font-bold uppercase tracking-wider text-stone-300">
+      ${WEEKDAYS_TH.map((d) => `<div>${d}</div>`).join('')}
+    </div>
+    <div class="space-y-1">${rows.join('')}</div>`;
+}
+
+function selectCalDay(key) {
+  state.cal.selected = state.cal.selected === key ? null : key;
+  const cardEl = document.getElementById('calendar-card');
+  if (cardEl) cardEl.innerHTML = calendarCardHTML();
+  const listEl = document.getElementById('calendar-day-list');
+  if (listEl) listEl.innerHTML = calendarDayListHTML();
+}
+
+function changeMonth(delta) {
+  let { year, month } = state.cal;
+  month += delta;
+  if (month > 12) { month = 1; year++; }
+  if (month < 1) { month = 12; year--; }
+  state.cal.year = year; state.cal.month = month; state.cal.selected = null;
+  const cardEl = document.getElementById('calendar-card');
+  if (cardEl) cardEl.innerHTML = calendarCardHTML();
+  const listEl = document.getElementById('calendar-day-list');
+  if (listEl) listEl.innerHTML = calendarDayListHTML();
+}
+
+function calendarDayListHTML() {
+  if (!state.cal.selected) return '';
+  const list = products.map(withComputed).filter((p) => p.expiryDate === state.cal.selected);
+  return `
+    <div class="mt-4 space-y-3">
+      <div class="flex items-center justify-between px-1">
+        <h3 class="text-sm font-bold text-stone-800">สินค้าที่หมดอายุวันที่ ${formatThaiDate(state.cal.selected)}</h3>
+        <span class="rounded-full bg-brand-50 px-2 py-0.5 text-[10px] font-bold text-brand-700">${list.length} รายการ</span>
+      </div>
+      <div class="space-y-2.5">${list.length > 0 ? list.map((p) => productCardHTML(p)).join('') : '<p class="py-6 text-center text-xs text-stone-400">ไม่มีสินค้าที่หมดอายุในวันนี้</p>'}</div>
+    </div>`;
+}
+
+// ==================== Admin ====================
+function adminHTML() {
+  if (!isAdmin()) {
+    return `
+      <div class="flex flex-col items-center justify-center py-20 text-center">
+        <div class="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-brand-50 text-3xl">🔒</div>
+        <h2 class="text-lg font-bold text-stone-800">พื้นที่สำหรับแอดมิน</h2>
+        <p class="mt-1 text-xs text-stone-400">กรุณาเข้าสู่ระบบเพื่อจัดการข้อมูลสินค้า</p>
+        <button onclick="openAdminLogin()" class="mt-6 rounded-full bg-brand-600 px-8 py-2.5 text-sm font-bold text-white shadow-lg active:scale-95">เข้าสู่ระบบแอดมิน</button>
+      </div>`;
+  }
+  const stats = computeStats();
+  return `
+    <div class="space-y-5 pb-6">
+      <header class="flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <span class="rounded-xl bg-brand-600 p-2 text-white text-lg">🛠️</span>
+          <div>
+            <h1 class="text-lg font-bold text-stone-800">แอดมิน</h1>
+            <p class="text-xs text-stone-400">จัดการสินค้าและคำขอใหม่</p>
+          </div>
+        </div>
+        <button onclick="logoutAdmin()" class="rounded-lg bg-stone-100 px-3 py-1.5 text-xs font-semibold text-stone-600 active:scale-95">ออกจากระบบ</button>
+      </header>
+
+      <div class="grid grid-cols-2 gap-3">
+        <button onclick="openProductForm()" class="flex flex-col items-center gap-2 rounded-2xl bg-brand-600 p-4 text-white shadow-card active:scale-95">
+          <span class="text-2xl">➕</span>
+          <span class="text-xs font-bold">เพิ่มสินค้าใหม่</span>
+        </button>
+        <button onclick="openPrintModal()" class="flex flex-col items-center gap-2 rounded-2xl bg-white p-4 text-stone-700 shadow-card ring-1 ring-stone-100 active:scale-95">
+          <span class="text-2xl">🖨️</span>
+          <span class="text-xs font-bold">พิมพ์รายการ</span>
+        </button>
+      </div>
+
+      <div class="space-y-3">
+        <div class="flex items-center justify-between px-1">
+          <h3 class="text-sm font-bold text-stone-800">📋 คำขอเพิ่มสินค้าใหม่ (${pendingSubmissions.length})</h3>
+          <button onclick="refreshCurrentTabData()" class="text-[11px] font-semibold text-brand-600">🔄 รีเฟรช</button>
+        </div>
+        <div class="space-y-3">${adminPendingListHTML()}</div>
+      </div>
+
+      <div class="space-y-3">
+        <div class="flex items-center justify-between px-1">
+          <h3 class="text-sm font-bold text-stone-800">📦 รายการสินค้าทั้งหมด (${products.length})</h3>
+          <p class="text-[11px] text-stone-400">เรียงตามวันหมดอายุ (ใกล้สุดอยู่บน)</p>
+        </div>
+        <div class="space-y-2.5">${products.map(withComputed).sort((a, b) => a.expiryDate.localeCompare(b.expiryDate)).map((p) => productCardHTML(p, { showActions: true })).join('')}</div>
+      </div>
+      
+      <div class="rounded-2xl bg-white p-4 shadow-card ring-1 ring-stone-100">
+        <h3 class="text-sm font-bold text-stone-800">💾 จัดการข้อมูล</h3>
+        <div class="mt-3 grid grid-cols-2 gap-2">
+          <button onclick="exportData()" class="rounded-xl bg-stone-50 py-2 text-xs font-semibold text-stone-600 active:scale-95">📤 ส่งออก JSON</button>
+          <button onclick="importData()" class="rounded-xl bg-stone-50 py-2 text-xs font-semibold text-stone-600 active:scale-95">📥 นำเข้า JSON</button>
+        </div>
+        <button onclick="confirmClearData()" class="mt-2 w-full rounded-xl bg-red-50 py-2 text-xs font-semibold text-red-600 active:scale-95">🗑️ ล้างข้อมูลทั้งหมด</button>
+      </div>
+    </div>`;
+}
+
+function openAdminLogin(onSuccess) {
+  pendingLoginSuccess = onSuccess;
+  openModal(`
+    <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div class="w-full max-w-xs rounded-2xl bg-white p-6 shadow-xl">
+        <h3 class="text-center text-base font-bold text-stone-800">เข้าสู่ระบบแอดมิน</h3>
+        <form id="admin-login-form" class="mt-4 space-y-3">
+          <input id="login-id" type="tel" placeholder="รหัสพนักงาน" class="w-full rounded-xl border border-stone-200 px-4 py-3 text-center text-sm font-bold tracking-widest outline-none focus:border-brand-500" />
+          <input id="login-pin" type="password" inputmode="numeric" placeholder="PIN 4 หลัก" class="w-full rounded-xl border border-stone-200 px-4 py-3 text-center text-sm font-bold tracking-widest outline-none focus:border-brand-500" />
+          <p id="login-error" class="hidden text-center text-xs font-medium text-red-600"></p>
+          <div class="flex gap-2 pt-2">
+            <button type="button" onclick="closeModal()" class="flex-1 rounded-xl bg-stone-100 py-2.5 text-sm font-semibold text-stone-600 active:scale-95">ยกเลิก</button>
+            <button type="submit" class="flex-1 rounded-xl bg-brand-600 py-2.5 text-sm font-semibold text-white active:scale-95">ตกลง</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  `);
+  const form = document.getElementById('admin-login-form');
+  if (form) {
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const id = document.getElementById('login-id').value;
+      const pin = document.getElementById('login-pin').value;
+      if (id === ADMIN_ID && pin === ADMIN_PIN) {
+        setAdmin(true);
+        closeModal();
+        if (pendingLoginSuccess) { pendingLoginSuccess(); pendingLoginSuccess = null; }
+        else { render(); }
+      } else {
+        const err = document.getElementById('login-error');
+        if (err) {
+          err.textContent = 'รหัสพนักงานหรือ PIN ไม่ถูกต้อง';
+          err.classList.remove('hidden');
+        }
+      }
+    });
+  }
+}
+
+function logoutAdmin() {
+  setAdmin(false);
+  state.tab = 'dashboard';
+  render();
+}
+
+function openProductForm(id, prefillBarcode) {
+  const p = id ? products.find((x) => x.id === id) : null;
+  const isEdit = !!p;
+  openModal(`
+    <div class="fixed inset-0 z-50 flex items-end justify-center bg-black/40 sm:items-center sm:p-4">
+      <div class="max-h-[92vh] w-full max-w-md overflow-y-auto rounded-t-2xl bg-white p-5 sm:rounded-2xl">
+        <div class="flex items-center justify-between">
+          <h3 class="text-base font-bold text-stone-800">${isEdit ? '✏️ แก้ไขสินค้า' : '➕ เพิ่มสินค้าใหม่'}</h3>
+          <button onclick="closeModal()" class="text-stone-400">✕</button>
+        </div>
+        <form id="product-form" class="mt-4 space-y-3">
+          <label class="flex flex-col items-center justify-center gap-1 rounded-xl border-2 border-dashed border-brand-200 bg-brand-50/50 py-4 text-brand-600 cursor-pointer">
+            <div id="form-image-preview">
+              ${p && p.imageUrl ? `<img src="${p.imageUrl}" class="h-24 w-24 rounded-lg object-cover" />` : '<span class="text-2xl">🖼️</span><span class="text-xs font-medium block mt-1">อัปโหลดรูปสินค้า</span>'}
+            </div>
+            <input id="form-image" type="file" accept="image/*" capture="environment" class="hidden" />
+          </label>
+          <div>
+            <label class="mb-1 block text-xs font-medium text-stone-500">บาร์โค้ด *</label>
+            <input id="form-barcode" required value="${escapeHtml(prefillBarcode || (p ? p.barcode : ''))}" class="w-full rounded-xl border border-stone-200 px-3 py-2.5 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100" />
+          </div>
+          <div>
+            <label class="mb-1 block text-xs font-medium text-stone-500">ชื่อสินค้า *</label>
+            <input id="form-name" required value="${escapeHtml(p ? p.name : '')}" class="w-full rounded-xl border border-stone-200 px-3 py-2.5 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100" />
+          </div>
+          <div>
+            <label class="mb-1 block text-xs font-medium text-stone-500">หมวดหมู่</label>
+            <input id="form-category" value="${escapeHtml(p ? p.category : '')}" class="w-full rounded-xl border border-stone-200 px-3 py-2.5 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100" placeholder="เช่น นม/ผลิตภัณฑ์นม" />
+          </div>
+          <div>
+            <label class="mb-1 block text-xs font-medium text-stone-500">วันหมดอายุ *</label>
+            <input id="form-expiry" required type="date" value="${p ? p.expiryDate : ''}" class="w-full rounded-xl border border-stone-200 px-3 py-2.5 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100" />
+          </div>
+          <div>
+            <label class="mb-1 block text-xs font-medium text-stone-500">หมายเหตุ</label>
+            <textarea id="form-notes" rows="2" class="w-full rounded-xl border border-stone-200 px-3 py-2.5 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100">${escapeHtml(p ? p.notes : '')}</textarea>
+          </div>
+          <button type="submit" class="w-full rounded-xl bg-brand-600 py-2.5 text-sm font-semibold text-white active:scale-95">${isEdit ? 'บันทึกการแก้ไข' : 'เพิ่มสินค้า'}</button>
+        </form>
+      </div>
+    </div>
+  `);
+
+  let currentImageData = p ? p.imageUrl : '';
+  const imgInput = document.getElementById('form-image');
+  if (imgInput) {
+    imgInput.addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        currentImageData = String(reader.result);
+        const preview = document.getElementById('form-image-preview');
+        if (preview) preview.innerHTML = `<img src="${currentImageData}" class="h-24 w-24 rounded-lg object-cover" />`;
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  const form = document.getElementById('product-form');
+  if (form) {
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const barcode = document.getElementById('form-barcode').value.trim();
+      const name = document.getElementById('form-name').value.trim();
+      const expiryDate = document.getElementById('form-expiry').value;
+      if (!barcode || !name || !expiryDate) return;
+
+      const updatedItem = {
+        id: isEdit ? p.id : generateLocalId(),
+        barcode, name,
+        category: document.getElementById('form-category').value.trim(),
+        imageUrl: currentImageData,
+        expiryDate,
+        notes: document.getElementById('form-notes').value.trim(),
+        addedDate: isEdit ? p.addedDate : new Date().toISOString(),
+      };
+
+      if (isEdit) {
+        const idx = products.findIndex((x) => x.id === id);
+        if (idx >= 0) {
+          products[idx] = updatedItem;
+          cloudUpdateItem('products', id, updatedItem);
+        }
+      } else {
+        products.push(updatedItem);
+        cloudAppendItem('products', updatedItem);
+      }
+      saveProducts(products);
+      closeModal();
+      refreshCurrentTabData();
+    });
+  }
+}
+
+function confirmDeleteProduct(id) {
+  const p = products.find((x) => x.id === id);
+  if (!p) return;
+  if (confirm(`คุณต้องการลบสินค้า "${p.name}" ใช่หรือไม่?`)) {
+    products = products.filter((x) => x.id !== id);
+    saveProducts(products);
+    cloudRemoveItem('products', id);
+    refreshCurrentTabData();
+  }
+}
+
+function confirmClearData() {
+  if (confirm('⚠️ คำเตือน: คุณกำลังจะลบข้อมูลสินค้าทั้งหมดในระบบ! ยืนยันการลบหรือไม่?')) {
+    const pin = prompt('กรุณาใส่ PIN แอดมินเพื่อยืนยัน:');
+    if (pin === ADMIN_PIN) {
+      products = [];
+      saveProducts(products);
+      cloudSet('products', products);
+      refreshCurrentTabData();
+      alert('ล้างข้อมูลเรียบร้อยแล้ว');
+    } else {
+      alert('PIN ไม่ถูกต้อง');
+    }
+  }
+}
+
+function exportData() {
+  const data = JSON.stringify(products, null, 2);
+  const blob = new Blob([data], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `rimping_products_${new Date().toISOString().slice(0, 10)}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function importData() {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = '.json';
+  input.onchange = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const imported = JSON.parse(ev.target.result);
+        if (Array.isArray(imported)) {
+          if (confirm(`พบข้อมูล ${imported.length} รายการ คุณต้องการนำเข้าข้อมูลนี้ใช่หรือไม่? (ข้อมูลเดิมจะไม่หายไป แต่จะเพิ่มรายการใหม่เข้าไป)`)) {
+            // รวมข้อมูลและกำจัดตัวซ้ำ (อ้างอิงจาก barcode + expiryDate)
+            imported.forEach((newItem) => {
+              if (!newItem.id) newItem.id = generateLocalId();
+              const isDuplicate = products.some((p) => p.barcode === newItem.barcode && p.expiryDate === newItem.expiryDate);
+              if (!isDuplicate) products.push(newItem);
+            });
+            saveProducts(products);
+            cloudSet('products', products);
+            refreshCurrentTabData();
+            alert('นำเข้าข้อมูลสำเร็จ');
+          }
+        } else {
+          alert('รูปแบบไฟล์ไม่ถูกต้อง');
+        }
+      } catch (err) {
+        alert('เกิดข้อผิดพลาดในการอ่านไฟล์');
+      }
+    };
+    reader.readAsText(file);
+  };
+  input.click();
+}
+
+function openPrintModal() {
+  const stats = computeStats();
+  openModal(`
+    <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div class="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl">
+        <h3 class="text-base font-bold text-stone-800">🖨️ พิมพ์รายการสินค้า</h3>
+        <p class="mt-1 text-xs text-stone-400">เลือกกลุ่มสินค้าที่ต้องการพิมพ์</p>
+        <div class="mt-4 space-y-2">
+          <button onclick="doPrint('expired')" class="w-full rounded-xl bg-red-50 py-3 text-sm font-semibold text-red-600 active:scale-95">🔴 เฉพาะที่หมดอายุแล้ว (${stats.expired})</button>
+          <button onclick="doPrint('urgent')" class="w-full rounded-xl bg-amber-50 py-3 text-sm font-semibold text-amber-600 active:scale-95">🟡 เฉพาะที่เร่งด่วน (${stats.urgent})</button>
+          <button onclick="doPrint('all')" class="w-full rounded-xl bg-stone-50 py-3 text-sm font-semibold text-stone-600 active:scale-95">📦 ทั้งหมด (${products.length})</button>
+        </div>
+        <button onclick="closeModal()" class="mt-4 w-full rounded-xl py-2 text-xs font-medium text-stone-400">ยกเลิก</button>
+      </div>
+    </div>
+  `);
+}
+
+function doPrint(filter) {
+  let list = products.map(withComputed);
+  if (filter !== 'all') list = list.filter((p) => p.status === filter);
+  list.sort((a, b) => a.expiryDate.localeCompare(b.expiryDate));
+
+  const printArea = document.getElementById('print-area');
+  if (!printArea) return;
+  
+  const title = filter === 'expired' ? 'รายการสินค้าหมดอายุ' : (filter === 'urgent' ? 'รายการสินค้าเร่งด่วน' : 'รายการสินค้าทั้งหมด');
+  
+  printArea.innerHTML = `
+    <h2>Rimping Expiry Tracker - ${title}</h2>
+    <p>ข้อมูล ณ วันที่ ${new Date().toLocaleDateString('th-TH', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</p>
+    <table>
+      <thead>
+        <tr>
+          <th>ลำดับ</th>
+          <th>บาร์โค้ด</th>
+          <th>ชื่อสินค้า</th>
+          <th>วันหมดอายุ</th>
+          <th>สถานะ</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${list.map((p, i) => `
+          <tr>
+            <td>${i + 1}</td>
+            <td>${p.barcode}</td>
+            <td>${p.name}</td>
+            <td>${formatThaiDate(p.expiryDate)}</td>
+            <td style="color: ${STATUS_COLOR[p.status]}">${STATUS_LABEL_TH[p.status]}</td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+  `;
+  window.print();
+  closeModal();
+}
+
+// ==================== Init ====================
+bootstrapData().then(() => {
+  setupRealtimeSync();
+  render();
+});
+</script>
+</body>
+</html>
